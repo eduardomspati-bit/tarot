@@ -11,26 +11,6 @@ const API_KEY = process.env.GROQ_API_KEY;
 app.post('/tirada', async (req, res) => {
     const { tema, a, b, c, d } = req.body;
 
-    const promptContenido = `
-    Actúa como un experto lector de Tarot Rider-Waite. Realiza una lectura interpretando estrictamente bajo este sistema.
-    Variables del tema: ${tema}. Cartas: ${a}, ${b}, ${c}, ${d}.
-    Debes estructurar tu respuesta EXACTAMENTE con este formato HTML (no uses markdown como '**' o '###' o '\`\`\`, usa etiquetas HTML directamente):
-
-    <div class="reading-section">
-        <h3>${a} + ${b}</h3>
-        <p>Aquí tu interpretación profunda de la combinación de la primera dupla (A y B) enfocada en el tema ${tema}.</p>
-    </div>
-    
-    <div class="reading-section">
-        <h3>${c} + ${d}</h3>
-        <p>Aquí tu interpretación profunda de la combinación de la segunda dupla (C y D) enfocada en el tema ${tema}.</p>
-    </div>
-    
-    <div class="reading-section">
-        <h3>Síntesis General</h3>
-        <p>Aquí tu conclusión o consejo final que unifique el mensaje de ambas duplas para el consultante.</p>
-    </div>`;
-
     try {
         // Importación dinámica para evitar problemas de compatibilidad
         const { default: fetch } = await import('node-fetch');
@@ -43,20 +23,66 @@ app.post('/tirada', async (req, res) => {
             },
             body: JSON.stringify({
                 model: "llama-3.3-70b-versatile",
-                messages: [{ role: "user", content: promptContenido }],
+                messages: [
+                    {
+                        role: "system",
+                        content: `Eres un experto y ancestral lector de Tarot Rider-Waite, especializado en un método predictivo de lectura por duplas.
+Tu tono debe ser místico, seguro, empático y directo. Evita palabras rebuscadas para que la lectura sea fluida al ser leída en voz alta. NO uses listas, viñetas, guiones ni asteriscos (*).
+
+Debes estructurar la interpretación siguiendo estrictamente estas reglas basadas en el método del consultante:
+1. La primera dupla representa el ESTADO ACTUAL o el PASADO INMEDIATO de la situación.
+2. La segunda dupla representa el FUTURO A CORTO O MEDIANO PLAZO (hacia dónde va la situación).
+3. En base a este viaje en el tiempo, debes arriesgar 2 o 3 PREDICCIONES CONCRETAS y posibles para el consultante.
+
+Devuelve la respuesta EXACTAMENTE en este formato HTML (comienza directamente con las etiquetas div, sin saludos ni introducciones):
+
+<div class="reading-section">
+    <h3>El Presente y Origen (${a} + ${b})</h3>
+    <p>[Aquí interpreta la primera dupla explicando el estado actual o pasado inmediato de la situación en base al tema elegido]</p>
+</div>
+
+<div class="reading-section">
+    <h3>El Camino hacia el Futuro (${c} + ${d})</h3>
+    <p>[Aquí interpreta la segunda dupla revelando hacia dónde se dirige la situación a corto o mediano plazo]</p>
+</div>
+
+<div class="reading-section">
+    <h3>Predicciones del Oráculo</h3>
+    <p>[Aquí lanza esas predicciones concretas, directas y posibles que deduces de las cartas combinadas, redactadas en un párrafo de corrido sin usar guiones ni viñetas]</p>
+</div>
+
+<div class="reading-section">
+    <h3>Consejo y Conclusión</h3>
+    <p><span id="conclusion">[Aquí une todo en un cierre potente, una frase inspiradora y el consejo final para el consultante]</span></p>
+</div>`
+                    },
+                    {
+                        role: "user",
+                        content: `Realiza la lectura de Tarot sobre el tema: ${tema}. Las cartas seleccionadas son: ${a}, ${b}, ${c} y ${d}.`
+                    }
+                ],
                 temperature: 0.7
             })
         });
 
         const data = await response.json();
         let text = data.choices[0].message.content;
-        text = text.replace(/```html/g, "").replace(/```/g, "").replace(/html/g, "");
+        text = text.replace(/```html/g, "").replace(/
+```/g, "").replace(/html/g, "");
 
         res.json({ lectura: text });
 
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: "Error en el servidor místico" });
+    }
+});
+
+// Levantar el servidor en el puerto correcto para Render
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`Servidor místico corriendo en el puerto ${PORT}`);
+});
     }
 });
 
