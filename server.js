@@ -9,14 +9,14 @@ app.use(express.json());
 const API_KEY = process.env.GROQ_API_KEY;
 
 app.post('/tirada', async (req, res) => {
-    // Ahora también recibimos el estilo seleccionado desde el index.html (por defecto 'filosofico')
+    // Recibimos los datos del frontend (cartas a, b, c, d y el estilo)
     const { tema, a, b, c, d, estilo = 'filosofico' } = req.body;
 
     try {
         // Importación dinámica para evitar problemas de compatibilidad
         const { default: fetch } = await import('node-fetch');
         
-        // 🛠️ Definimos las instrucciones de personalidad (System Prompt) según el estilo elegido
+        // Definimos las instrucciones de personalidad (System Prompt) según el estilo elegido
         let instruccionesPersonalidad = "";
 
         if (estilo === 'morgana') {
@@ -28,7 +28,7 @@ Tu tono debe ser místico, seguro, directo, terrenal y al grano, sin rodeos filo
 Tu tono debe ser reflexivo, psicológico, empático, constructivo y reconfortante. No haces predicciones fatalistas ni simplistas; utilizas los arquetipos e imágenes de las cartas para guiar al consultante hacia el autoconocimiento, la reflexión interna profunda, la sabiduría espiritual y su crecimiento personal.`;
         }
 
-        // Estas son las reglas de formato que aplican para ambos estilos por igual para que la app no se rompa
+        // Estas son las reglas de formato que aplican para ambos estilos por igual
         const reglasFormato = `
 Evita palabras demasiado rebuscadas para que la lectura sea fluida al ser leída en voz alta. NO uses listas, viñetas, guiones ni asteriscos (*).
 
@@ -40,12 +40,12 @@ Debes estructurar la interpretación siguiendo estrictamente estas reglas basada
 Devuelve la respuesta EXACTAMENTE en este formato HTML (comienza directamente con las etiquetas div, sin saludos ni introducciones):
 
 <div class="reading-section">
-    <h3>El Presente y Origen (\${a} + \${b})</h3>
+    <h3>El Presente y Origen (${a} + ${b})</h3>
     <p>[Aquí interpreta la primera dupla explicando el estado actual o pasado inmediato de la situación en base al tema elegido]</p>
 </div>
 
 <div class="reading-section">
-    <h3>El Camino hacia el Futuro (\${c} + \${d})</h3>
+    <h3>El Camino hacia el Futuro (${c} + ${d})</h3>
     <p>[Aquí interpreta la segunda dupla revelando hacia dónde se dirige la situación a corto o mediano plazo]</p>
 </div>
 
@@ -61,6 +61,43 @@ Devuelve la respuesta EXACTAMENTE en este formato HTML (comienza directamente co
 
         const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
             method: "POST",
+            headers: {
+                "Authorization": `Bearer ${API_KEY}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                model: "llama-3.3-70b-versatile",
+                messages: [
+                    {
+                        role: "system",
+                        content: instruccionesPersonalidad + reglasFormato
+                    },
+                    {
+                        role: "user",
+                        content: `Realiza la lectura de Tarot sobre el tema: ${tema}. Las cartas seleccionadas son: ${a}, ${b}, ${c} y ${d}.`
+                    }
+                ],
+                temperature: 0.7
+            })
+        });
+
+        const data = await response.json();
+        let text = data.choices[0].message.content;
+        text = text.replace(/```html/g, "").replace(/```/g, "").replace(/html/g, "");
+
+        res.json({ lectura: text });
+
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Error en el servidor místico" });
+    }
+});
+
+// Levantar el servidor en el puerto correcto para Render
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`Servidor místico corriendo en el puerto ${PORT}`);
+});            method: "POST",
             headers: {
                 "Authorization": `Bearer \${API_KEY}`,
                 "Content-Type": "application/json"
