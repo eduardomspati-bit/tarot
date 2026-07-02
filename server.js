@@ -4,7 +4,12 @@ const cors = require('cors');
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// ¡ESTA ES LA LÍNEA CLAVE! Le dice a Node que sirva los HTML de esta carpeta
 app.use(express.static(__dirname));
+
+// Tu clave de Groq queda guardada acá...
+const API_KEY = process.env.GROQ_API_KEY;
 
 // Tu clave de Groq queda guardada acá, segura en el servidor de Render
 const API_KEY = process.env.GROQ_API_KEY;
