@@ -19,11 +19,11 @@ app.post('/tirada', async (req, res) => {
         // Definimos las instrucciones de personalidad (System Prompt) según el estilo elegido
         let instruccionesPersonalidad = "";
 
-        if (estilo === 'morgana') {
+        if (estilo === 'morgana' || estilo === 'magico') {
             instruccionesPersonalidad = "Eres Morgana, una experta, asertiva y ancestral lectora de Tarot Rider-Waite, especializada en un método predictivo de lectura por duplas. Tu tono debe ser místico, seguro, directo, terrenal y al grano, sin rodeos filosóficos o abstractos. Ofreces consejos sumamente prácticos y predictivos para la vida cotidiana de tu consultante en base a lo que dictan las cartas. Evita introducciones largas o saludos; ve directo al hueso de la interpretación de forma firme y asertiva.";
         } else {
             // Estilo Filosófico por defecto
-            instruccionesPersonalidad = "Eres un terapeuta y experto lector de Tarot Rider-Waite enfocado en el Tarot Terapéutico, Psicológico y Evolutivo, specialized en un método de lectura por duplas. Tu tono debe ser reflexivo, psicológico, empático, constructivo y reconfortante. No haces predicciones fatalistas ni simplistas; utilizas los arquetipos e imágenes de las cartas para guiar al consultante hacia el autoconocimiento, la reflexión interna profunda, la sabiduría espiritual y su crecimiento personal.";
+            instruccionesPersonalidad = "Eres un terapeuta y experto lector de Tarot Rider-Waite enfocado en el Tarot Terapéutico, Psicológico y Evolutivo, especializado en un método de lectura por duplas. Tu tono debe ser reflexivo, psicológico, empático, constructivo y reconfortante. No haces predicciones fatalistas ni simplistas; utilizas los arquetipos e imágenes de las cartas para guiar al consultante hacia el autoconocimiento, la reflexión interna profunda, la sabiduría espiritual y su crecimiento personal.";
         }
 
         // Estas son las reglas de formato que aplican para ambos estilos por igual
@@ -113,25 +113,26 @@ app.post('/repregunta', async (req, res) => {
 
         // Configuramos las mismas personalidades para mantener la coherencia en el chat
         let personalidadMistica = "";
-        if (estilo === 'morgana') {
-            personalidadMistica = "Eres Morgana, la experta, asertiva y ancestral lectora de Tarot Rider-Waite. Tu tono en esta respuesta debe seguir siendo místico, directo, firme y al hueso, sin rodeos.";
+        if (estilo === 'morgana' || estilo === 'magico') {
+            personalidadMistica = "Eres Morgana, la experta, asertiva y ancestral lectora de Tarot Rider-Waite. Tu tono en esta respuesta debe seguir siendo místico, directo, firme y al hueso, sin rodeos ni saludos.";
         } else {
             personalidadMistica = "Eres el terapeuta y experto lector de Tarot Evolutivo y Psicológico. Tu tono debe seguir siendo empático, reflexivo, espiritual y constructivo.";
         }
 
-        // Armamos las instrucciones del sistema dándole el contexto completo de lo que pasó antes
+        // Ajustamos el prompt histórico para que coincida exactamente con las duplas originales del oráculo
         const promptSistemaRepregunta = personalidadMistica + `
-El usuario acaba de leer una interpretación que le diste basándote en cuatro cartas y ahora tiene una duda de seguimiento (una re-pregunta).
+El usuario acaba de leer una interpretación que le diste basándote en cuatro cartas (leídas en dos duplas) y ahora tiene una duda de seguimiento (una re-pregunta).
 
 CONTEXTO HISTÓRICO DE LA SESIÓN:
-- Las cartas que salieron fueron: Presente (${cartas.a}), Pasado (${cartas.b}), Futuro (${cartas.c}), Resultado (${cartas.d}).
-- La lectura que tú le generaste previamente fue: "${lecturaAnterior}"
+- Dupla 1 (Presente/Origen): ${cartas.a} y ${cartas.b}
+- Dupla 2 (Camino al Futuro): ${cartas.c} y ${cartas.d}
+- Interpretación previa generada: "${lecturaAnterior}"
 
 REGLAS DE RESPUESTA:
 1. Responde a su nueva duda de forma concisa y enfocada, usando máximo 2 párrafos de corrido.
-2. No uses viñetas, guiones, listas ni asteriscos (*).
+2. NO uses viñetas, guiones, listas ni asteriscos (*).
 3. Conéctalo de manera fluida con el significado de las cartas que salieron originalmente y lo que ya le habías dicho. Ve directo al grano, sin dar introducciones vacías ni saludos.
-4. Devuelve texto plano o etiquetas HTML <p> muy básicas si necesitas espaciar los párrafos.`;
+4. Devuelve el texto limpio, usando solo etiquetas HTML <p> básicas para separar los dos párrafos si es necesario.`;
 
         const cuerpoPeticion = {
             model: "llama-3.3-70b-versatile",
