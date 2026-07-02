@@ -167,6 +167,17 @@ REGLAS DE RESPUESTA:
 
 // Levantar el servidor en el puerto correcto para Render
 const PORT = process.env.PORT || 3000;
+// === ENDPOINT DE ADMINISTRACIÓN: LISTADO DE CLIENTES (SIMULADO) ===
+app.get('/api/admin/clientes', (req, res) => {
+    // Aquí simulas la data que vendrá de tu base de datos futura
+    const clientesSimulados = [
+        { id: 1, nombre: "Eduardo Marcelo", email: "eduardo@example.com", plan: "Premium", totalTiradas: 14, ultimaConexion: "2026-07-01" },
+        { id: 2, nombre: "Ana Clara", email: "anaclara@gmail.com", plan: "Gratis", totalTiradas: 3, ultimaConexion: "2026-06-28" },
+        { id: 3, nombre: "Juan Pérez", email: "juan.perez@hotmail.com", plan: "Premium", totalTiradas: 28, ultimaConexion: "2026-07-01" }
+    ];
+    
+    res.json({ clientes: clientesSimulados });
+});
 app.listen(PORT, () => {
     console.log("SERVIDOR MÍSTICO ACTUALIZADO Y CORRIENDO EN PUERTO " + PORT);
 });
