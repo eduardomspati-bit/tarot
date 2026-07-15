@@ -16,6 +16,11 @@ app.post('/tirada', async (req, res) => {
     const { tema, a, b, c, d, estilo = 'filosofico', pregunta } = req.body;
 
     try {
+        // Validación de seguridad para que no intente consultar a Groq con datos vacíos
+        if (!a || !b || !c || !d) {
+            return res.status(400).json({ error: "Faltan cartas para realizar la tirada." });
+        }
+
         // Importación dinámica para evitar problemas de compatibilidad
         const { default: fetch } = await import('node-fetch');
         
@@ -111,15 +116,20 @@ Devuelve la respuesta EXACTAMENTE en este formato HTML (comienza directamente co
             promptUsuario = "Realiza la lectura de Tarot sobre el tema general: " + tema + ". Las cartas seleccionadas son: " + a + ", " + b + ", " + c + " y " + d + ".";
         }
 
-        // Armamos el cuerpo del mensaje para enviar a Groq
+        // CONTROL DE VARIABLE CORREGIDO: "style" por "estilo" para evitar ReferenceError
         const cuerpoPeticion = {
             model: "llama-3.3-70b-versatile",
             messages: [
                 { role: "system", content: promptSistema },
                 { role: "user", content: promptUsuario }
             ],
-            temperature: style === 'manual' ? 0.3 : 0.7 // Temperatura más baja para el manual para hacerlo más conciso y objetivo
+            temperature: estilo === 'manual' ? 0.3 : 0.7 
         };
+
+        if (!API_KEY) {
+            console.error("❌ ERROR: La variable de entorno GROQ_API_KEY no está configurada.");
+            return res.status(500).json({ error: "No se encontró la configuración de clave de API en el servidor." });
+        }
 
         // Hacemos el fetch de forma super limpia y tradicional
         const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -132,14 +142,21 @@ Devuelve la respuesta EXACTAMENTE en este formato HTML (comienza directamente co
         });
 
         const data = await response.json();
+        
+        // Verificación de que Groq devolvió datos válidos antes de procesarlos
+        if (!data.choices || data.choices.length === 0) {
+            console.error("Respuesta inválida de Groq API:", data);
+            throw new Error("Respuesta incompleta de Groq");
+        }
+
         let text = data.choices[0].message.content;
         text = text.replace(/```html/g, "").replace(/```/g, "").replace(/html/g, "");
 
         res.json({ lectura: text });
 
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: "Error en el servidor místico" });
+        console.error("💥 Error en endpoint /tirada:", error);
+        res.status(500).json({ error: "Error en el servidor místico", detalles: error.message });
     }
 });
 
@@ -198,6 +215,11 @@ REGLAS DE RESPUESTA:
         });
 
         const data = await response.json();
+        
+        if (!data.choices || data.choices.length === 0) {
+             throw new Error("Respuesta incompleta de Groq en repregunta");
+        }
+
         let respuestaIA = data.choices[0].message.content;
         respuestaIA = respuestaIA.replace(/```html/g, "").replace(/```/g, "").replace(/html/g, "");
 
@@ -212,9 +234,9 @@ REGLAS DE RESPUESTA:
 
 // Levantar el servidor en el puerto correcto para Render
 const PORT = process.env.PORT || 3000;
+
 // === ENDPOINT DE ADMINISTRACIÓN: LISTADO DE CLIENTES (SIMULADO) ===
 app.get('/api/admin/clientes', (req, res) => {
-    // Aquí simulas la data que vendrá de tu base de datos futura
     const clientesSimulados = [
         { id: 1, nombre: "Eduardo Marcelo", email: "eduardo@example.com", plan: "Premium", totalTiradas: 14, ultimaConexion: "2026-07-01" },
         { id: 2, nombre: "Ana Clara", email: "anaclara@gmail.com", plan: "Gratis", totalTiradas: 3, ultimaConexion: "2026-06-28" },
@@ -223,6 +245,7 @@ app.get('/api/admin/clientes', (req, res) => {
     
     res.json({ clientes: clientesSimulados });
 });
+
 app.listen(PORT, () => {
     console.log("SERVIDOR MÍSTICO ACTUALIZADO Y CORRIENDO EN PUERTO " + PORT);
 });
