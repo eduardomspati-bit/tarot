@@ -183,7 +183,7 @@ app.post('/repregunta', async (req, res) => {
 
         // Ajustamos el prompt histórico para que coincida exactamente con las duplas originales del oráculo
         const promptSistemaRepregunta = personalidadMistica + `
-El usuario acaba de leer una interpretación que le diste basándote en cuatro cartas (leídas en dos duplas) y ahora tiene una duda de seguimiento (una re-pregunta).
+El usuario acaba de leer una interpretación que le diste basándote en cuatro cartas (leídas en dos duplas) and ahora tiene una duda de seguimiento (una re-pregunta).
 
 CONTEXTO HISTÓRICO DE LA SESIÓN:
 - Dupla 1 (Presente/Origen): ${cartas.a} y ${cartas.b}
@@ -235,13 +235,14 @@ REGLAS DE RESPUESTA:
 // Levantar el servidor en el puerto correcto para Render
 const PORT = process.env.PORT || 3000;
 
-// === ENDPOINT DE ADMINISTRACIÓN: LISTADO DE CLIENTES (SIMULADO) ===
+// === ENDPOINT DE ADMINISTRACIÓN: LISTADO DE CLIENTES (VERIFICADO) ===
 app.get('/api/admin/clientes', (req, res) => {
     // Leemos la clave que viene desde el frontend en la cabecera 'x-admin-token'
     const tokenAdmin = req.headers['x-admin-token'];
     const MI_CLAVE_SECRETA = process.env.ADMIN_SECRET_KEY || "MiTokenSecreto123";
 
-    if (tokenAdmin !== MI_CLAI_SECRETA) {
+    // 🔥 CORREGIDO: Ahora compara la variable correcta (MI_CLAVE_SECRETA)
+    if (tokenAdmin !== MI_CLAVE_SECRETA) {
         return res.status(403).json({ error: "No tienes permisos para ver estos datos místicos." });
     }
 
@@ -253,6 +254,7 @@ app.get('/api/admin/clientes', (req, res) => {
     
     res.json({ clientes: clientesSimulados });
 });
+
 app.listen(PORT, () => {
     console.log("SERVIDOR MÍSTICO ACTUALIZADO Y CORRIENDO EN PUERTO " + PORT);
 });
