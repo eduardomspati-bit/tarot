@@ -237,6 +237,14 @@ const PORT = process.env.PORT || 3000;
 
 // === ENDPOINT DE ADMINISTRACIÓN: LISTADO DE CLIENTES (SIMULADO) ===
 app.get('/api/admin/clientes', (req, res) => {
+    // Leemos la clave que viene desde el frontend en la cabecera 'x-admin-token'
+    const tokenAdmin = req.headers['x-admin-token'];
+    const MI_CLAVE_SECRETA = process.env.ADMIN_SECRET_KEY || "MiTokenSecreto123";
+
+    if (tokenAdmin !== MI_CLAI_SECRETA) {
+        return res.status(403).json({ error: "No tienes permisos para ver estos datos místicos." });
+    }
+
     const clientesSimulados = [
         { id: 1, nombre: "Eduardo Marcelo", email: "eduardo@example.com", plan: "Premium", totalTiradas: 14, ultimaConexion: "2026-07-01" },
         { id: 2, nombre: "Ana Clara", email: "anaclara@gmail.com", plan: "Gratis", totalTiradas: 3, ultimaConexion: "2026-06-28" },
@@ -245,7 +253,6 @@ app.get('/api/admin/clientes', (req, res) => {
     
     res.json({ clientes: clientesSimulados });
 });
-
 app.listen(PORT, () => {
     console.log("SERVIDOR MÍSTICO ACTUALIZADO Y CORRIENDO EN PUERTO " + PORT);
 });
