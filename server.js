@@ -261,23 +261,33 @@ app.get('/api/admin/clientes', async (req, res) => {
     }
 
     try {
-        // Consultamos la base de datos de MongoDB
-        const usuariosDB = await Usuario.find().sort({ updatedAt: -1 });
+        // Verificar si Mongoose está definido y conectado
+        if (!mongoose || mongoose.connection.readyState !== 1) {
+            console.error("❌ MongoDB no está conectado. Estado de conexión:", mongoose ? mongoose.connection.readyState : "Mongoose no definido");
+            return res.status(500).json({ error: "La base de datos MongoDB no está conectada." });
+        }
 
-        // Mapeamos los campos para que coincidan perfectamente con tu HTML de admin
-        const clientesFormateados = usuariosDB.map(u => ({
-            id: u._id.toString(),
-            nombre: u.nombre,
-            email: u.email,
-            plan: u.plan,
-            totalTiradas: u.totalTiradas,
-            ultimaConexion: u.ultimaConexion || 'Hoy'
+        // Consultamos la base de datos de MongoDB
+        const usuariosDB = await Usuario.find().lean(); // .lean() mejora el rendimiento y devuelve objetos JS simples
+
+        // Mapeamos los campos con valores por defecto por si alguno viene undefined
+        const clientesFormateados = (usuariosDB || []).map(u => ({
+            id: u._id ? u._id.toString() : '',
+            nombre: u.nombre || 'Consultante Anonimo',
+            email: u.email || 'sin-email@ejemplo.com',
+            plan: u.plan || 'Gratis',
+            totalTiradas: typeof u.totalTiradas === 'number' ? u.totalTiradas : 0,
+            ultimaConexion: u.ultimaConexion || (u.updatedAt ? new Date(u.updatedAt).toLocaleDateString() : 'Hoy')
         }));
 
-        res.json({ clientes: clientesFormateados });
+        return res.json({ clientes: clientesFormateados });
+
     } catch (error) {
-        console.error("Error al consultar clientes en MongoDB:", error);
-        res.status(500).json({ error: "Error al recuperar usuarios de la base de datos." });
+        console.error("❌ Error grave al consultar clientes en MongoDB:", error.message);
+        return res.status(500).json({ 
+            error: "Error al recuperar usuarios de la base de datos.",
+            detalle: error.message 
+        });
     }
 });
 
@@ -292,12 +302,18 @@ app.post('/api/admin/cambiar-plan', async (req, res) => {
 
     const { userId, nuevoPlan } = req.body;
 
+    if (!userId || !nuevoPlan) {
+        return res.status(400).json({ error: "Faltan datos requeridos (userId o nuevoPlan)." });
+    }
+
     try {
+        const esValidoId = mongoose.Types.ObjectId.isValid(userId);
+        
         const usuario = await Usuario.findOne({
             $or: [
-                { _id: mongoose.Types.ObjectId.isValid(userId) ? userId : null },
+                esValidoId ? { _id: userId } : null,
                 { email: userId }
-            ]
+            ].filter(Boolean)
         });
 
         if (!usuario) {
@@ -307,10 +323,10 @@ app.post('/api/admin/cambiar-plan', async (req, res) => {
         usuario.plan = nuevoPlan;
         await usuario.save();
 
-        res.json({ mensaje: `Plan de ${usuario.nombre} actualizado a ${nuevoPlan} exitosamente.`, usuario });
+        return res.json({ mensaje: `Plan de ${usuario.nombre} actualizado a ${nuevoPlan} exitosamente.`, usuario });
     } catch (error) {
-        console.error("Error al actualizar plan:", error);
-        res.status(500).json({ error: "Error al actualizar el plan en la base de datos." });
+        console.error("❌ Error al actualizar plan:", error.message);
+        return res.status(500).json({ error: "Error al actualizar el plan en la base de datos." });
     }
 });
 
@@ -326,16 +342,18 @@ app.post('/api/usuarios/registrar', async (req, res) => {
                 nombre: nombre || 'Consultante Místico',
                 email: email,
                 plan: 'Gratis',
-                totalTiradas: 1
+                totalTiradas: 1,
+                ultimaConexion: new Date().toISOString().split('T')[0]
             });
         } else {
-            usuario.totalTiradas += 1;
+            usuario.totalTiradas = (usuario.totalTiradas || 0) + 1;
             usuario.ultimaConexion = new Date().toISOString().split('T')[0];
         }
         await usuario.save();
-        res.json({ mensaje: 'Usuario registrado/actualizado', usuario });
+        return res.json({ mensaje: 'Usuario registrado/actualizado', usuario });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        console.error("❌ Error al registrar usuario:", error.message);
+        return res.status(500).json({ error: error.message });
     }
 });
 
