@@ -1,44 +1,67 @@
 const express = require('express');
 const cors = require('cors');
+const mongoose = require('mongoose');
+require('dotenv').config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ¡ESTA ES LA LÍNEA CLAVE! Le dice a Node que sirva los HTML de esta carpeta
+// Servir archivos estáticos HTML/JS
 app.use(express.static(__dirname));
 
-// Tu clave de Groq queda guardada acá, segura en el servidor de Render
+// ==========================================
+// 1. CONEXIÓN A MONGODB ATLAS
+// ==========================================
+const MONGO_URI = process.env.MONGO_URI;
+
+if (MONGO_URI) {
+    mongoose.connect(MONGO_URI)
+        .then(() => console.log('🔮 Conectado exitosamente a MongoDB Atlas'))
+        .catch(err => console.error('❌ Error de conexión a MongoDB:', err));
+} else {
+    console.warn('⚠️ MONGO_URI no está configurada en las variables de entorno.');
+}
+
+// ==========================================
+// 2. MODELO DE DATOS DE USUARIOS EN MONGODB
+// ==========================================
+const UsuarioSchema = new mongoose.Schema({
+    nombre: { type: String, required: true },
+    email: { type: String, required: true, unique: true },
+    plan: { type: String, enum: ['Gratis', 'Premium'], default: 'Gratis' },
+    totalTiradas: { type: Number, default: 0 },
+    ultimaConexion: { type: String, default: () => new Date().toISOString().split('T')[0] }
+}, { timestamps: true });
+
+const Usuario = mongoose.models.Usuario || mongoose.model('Usuario', UsuarioSchema);
+
+// Clave de Groq guardada en las variables de entorno
 const API_KEY = process.env.GROQ_API_KEY;
 
+// ==========================================
+// 3. ENDPOINT PRINCIPAL DE TIRADAS DE TAROT
+// ==========================================
 app.post('/tirada', async (req, res) => {
-    // Recibimos los datos del frontend (ahora sumamos "pregunta" si viene)
     const { tema, a, b, c, d, estilo = 'filosofico', pregunta } = req.body;
 
     try {
-        // Validación de seguridad para que no intente consultar a Groq con datos vacíos
         if (!a || !b || !c || !d) {
             return res.status(400).json({ error: "Faltan cartas para realizar la tirada." });
         }
 
-        // Importación dinámica para evitar problemas de compatibilidad
         const { default: fetch } = await import('node-fetch');
         
-        // Juntamos el prompt completo en una sola variable limpia
         let promptSistema = "";
 
-        // ==========================================
-        // ADAPTACIÓN DE PROMPTS SEGÚN EL ESTILO
-        // ==========================================
         if (estilo === 'manual') {
-            // El Modo Manual entrega una lectura analítica, técnica y separada por duplas
             promptSistema = `Actúa como un diccionario técnico, objetivo y neutral de Tarot.
 Tu tarea exclusiva es analizar las dos duplas de cartas que te presenta el usuario:
 - Dupla 1: ${a} y ${b}
 - Dupla 2: ${c} y ${d}
 
 Para cada dupla, debes proporcionar de 3 a 4 posibles interpretaciones o significados prácticos y objetivos de su combinación (palabras clave, conceptos o direcciones de interpretación).
-Reglas estrictas que debes cumplir:
+Reglas strictly que debes cumplir:
 1. No redactes párrafos largos de narrativa poética o mística.
 2. No des consejos directos al consultante ("te recomiendo que...", "deberías...").
 3. Mantén un tono neutro, analítico e instructivo.
@@ -64,17 +87,14 @@ Devuelve la respuesta estructurada ESTRICTAMENTE en formato HTML de la siguiente
     </ul>
 </div>`;
         } else {
-            // Prompts para estilos normales ('filosofico', 'magico' o 'morgana')
             let instruccionesPersonalidad = "";
 
             if (estilo === 'morgana' || estilo === 'magico') {
                 instruccionesPersonalidad = "Eres Morgana, una experta, asertiva y ancestral lectora de Tarot Rider-Waite, especializada en un método predictivo de lectura por duplas. Tu tono debe ser místico, seguro, directo, terrenal y al grano, sin rodeos filosóficos o abstractos. Ofreces consejos sumamente prácticos y predictivos para la vida cotidiana de tu consultante en base a lo que dictan las cartas. Evita introducciones largas o saludos; ve directo al hueso de la interpretación de forma firme y asertiva.";
             } else {
-                // Estilo Filosófico por defecto
                 instruccionesPersonalidad = "Eres un terapeuta y experto lector de Tarot Rider-Waite enfocado en el Tarot Terapéutico, Psicológico y Evolutivo, especializado en un método de lectura por duplas. Tu tono debe ser reflexivo, psicológico, empático, constructivo y reconfortante. No haces predicciones fatalistas ni simplistas; utilizas los arquetipos e imágenes de las cartas para guiar al consultante hacia el autoconocimiento, la reflexión interna profunda, la sabiduría espiritual y su crecimiento personal.";
             }
 
-            // Estas son las reglas de formato que aplican para ambos estilos por igual
             const reglasFormato = `
 Evita palabras demasiado rebuscadas para que la lectura sea fluida al ser leída en voz alta. NO uses listas, viñetas, guiones ni asteriscos (*).
 
@@ -108,7 +128,6 @@ Devuelve la respuesta EXACTAMENTE en este formato HTML (comienza directamente co
             promptSistema = instruccionesPersonalidad + reglasFormato;
         }
         
-        // --- ADAPTACIÓN PREMIUM: Cambiamos el prompt del usuario según si hizo pregunta o no ---
         let promptUsuario = "";
         if (tema === 'Pregunta Específica' && pregunta) {
             promptUsuario = "El consultante tiene una PREGUNTA ESPECÍFICA: \"" + pregunta + "\". Realiza la lectura de Tarot orientando TODO tu análisis a responder directamente a esa duda. Las cartas seleccionadas son: " + a + ", " + b + ", " + c + " y " + d + ".";
@@ -116,7 +135,6 @@ Devuelve la respuesta EXACTAMENTE en este formato HTML (comienza directamente co
             promptUsuario = "Realiza la lectura de Tarot sobre el tema general: " + tema + ". Las cartas seleccionadas son: " + a + ", " + b + ", " + c + " y " + d + ".";
         }
 
-        // CONTROL DE VARIABLE CORREGIDO: "style" por "estilo" para evitar ReferenceError
         const cuerpoPeticion = {
             model: "llama-3.3-70b-versatile",
             messages: [
@@ -131,7 +149,6 @@ Devuelve la respuesta EXACTAMENTE en este formato HTML (comienza directamente co
             return res.status(500).json({ error: "No se encontró la configuración de clave de API en el servidor." });
         }
 
-        // Hacemos el fetch de forma super limpia y tradicional
         const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
             method: "POST",
             headers: {
@@ -143,7 +160,6 @@ Devuelve la respuesta EXACTAMENTE en este formato HTML (comienza directamente co
 
         const data = await response.json();
         
-        // Verificación de que Groq devolvió datos válidos antes de procesarlos
         if (!data.choices || data.choices.length === 0) {
             console.error("Respuesta inválida de Groq API:", data);
             throw new Error("Respuesta incompleta de Groq");
@@ -160,7 +176,9 @@ Devuelve la respuesta EXACTAMENTE en este formato HTML (comienza directamente co
     }
 });
 
-// === NUEVO ENDPOINT PREMIUM: RE-PREGUNTA SOBRE LA MISMA LECTURA ===
+// ==========================================
+// 4. ENDPOINT PARA RE-PREGUNTAS PREMIUM
+// ==========================================
 app.post('/repregunta', async (req, res) => {
     const { cartas, lecturaAnterior, repregunta, estilo = 'filosofico' } = req.body;
 
@@ -171,7 +189,6 @@ app.post('/repregunta', async (req, res) => {
     try {
         const { default: fetch } = await import('node-fetch');
 
-        // Configuramos las mismas personalidades para mantener la coherencia en el chat
         let personalidadMistica = "";
         if (estilo === 'manual') {
             personalidadMistica = "Eres un oráculo analítico y técnico de Tarot. Tu tono en esta respuesta debe ser sumamente claro, estructurado, directo y didáctico para aclarar las dudas sobre las duplas analizadas, sin saludos ceremoniales.";
@@ -181,9 +198,8 @@ app.post('/repregunta', async (req, res) => {
             personalidadMistica = "Eres el terapeuta y experto lector de Tarot Evolutivo y Psicológico. Tu tono debe seguir siendo empático, reflexivo, espiritual y constructivo.";
         }
 
-        // Ajustamos el prompt histórico para que coincida exactamente con las duplas originales del oráculo
         const promptSistemaRepregunta = personalidadMistica + `
-El usuario acaba de leer una interpretación que le diste basándote en cuatro cartas (leídas en dos duplas) and ahora tiene una duda de seguimiento (una re-pregunta).
+El usuario acaba de leer una interpretación que le diste basándote en cuatro cartas (leídas en dos duplas) y ahora tiene una duda de seguimiento (una re-pregunta).
 
 CONTEXTO HISTÓRICO DE LA SESIÓN:
 - Dupla 1 (Presente/Origen): ${cartas.a} y ${cartas.b}
@@ -223,7 +239,6 @@ REGLAS DE RESPUESTA:
         let respuestaIA = data.choices[0].message.content;
         respuestaIA = respuestaIA.replace(/```html/g, "").replace(/```/g, "").replace(/html/g, "");
 
-        // Se envía de vuelta en la propiedad "respuesta" tal cual lo espera tu js/app.js
         res.json({ respuesta: respuestaIA });
 
     } catch (error) {
@@ -232,29 +247,100 @@ REGLAS DE RESPUESTA:
     }
 });
 
-// Levantar el servidor en el puerto correcto para Render
-const PORT = process.env.PORT || 3000;
+// ==========================================
+// 5. ENDPOINTS DE ADMINISTRACIÓN Y BASE DE DATOS
+// ==========================================
 
-// === ENDPOINT DE ADMINISTRACIÓN: LISTADO DE CLIENTES (VERIFICADO) ===
-app.get('/api/admin/clientes', (req, res) => {
-    // Leemos la clave que viene desde el frontend en la cabecera 'x-admin-token'
+// GET: Obtener lista de clientes desde MongoDB Atlas
+app.get('/api/admin/clientes', async (req, res) => {
     const tokenAdmin = req.headers['x-admin-token'];
-    const MI_CLAVE_SECRETA = process.env.ADMIN_SECRET_KEY || "MiTokenSecreto123";
+    const MI_CLAVE_SECRETA = process.env.ADMIN_SECRET_KEY || "MarinaRabino1995";
 
-    // 🔥 CORREGIDO: Ahora compara la variable correcta (MI_CLAVE_SECRETA)
     if (tokenAdmin !== MI_CLAVE_SECRETA) {
         return res.status(403).json({ error: "No tienes permisos para ver estos datos místicos." });
     }
 
-    const clientesSimulados = [
-        { id: 1, nombre: "Eduardo Marcelo", email: "eduardo@example.com", plan: "Premium", totalTiradas: 14, ultimaConexion: "2026-07-01" },
-        { id: 2, nombre: "Ana Clara", email: "anaclara@gmail.com", plan: "Gratis", totalTiradas: 3, ultimaConexion: "2026-06-28" },
-        { id: 3, nombre: "Juan Pérez", email: "juan.perez@hotmail.com", plan: "Premium", totalTiradas: 28, ultimaConexion: "2026-07-01" }
-    ];
-    
-    res.json({ clientes: clientesSimulados });
+    try {
+        // Consultamos la base de datos de MongoDB
+        const usuariosDB = await Usuario.find().sort({ updatedAt: -1 });
+
+        // Mapeamos los campos para que coincidan perfectamente con tu HTML de admin
+        const clientesFormateados = usuariosDB.map(u => ({
+            id: u._id.toString(),
+            nombre: u.nombre,
+            email: u.email,
+            plan: u.plan,
+            totalTiradas: u.totalTiradas,
+            ultimaConexion: u.ultimaConexion || 'Hoy'
+        }));
+
+        res.json({ clientes: clientesFormateados });
+    } catch (error) {
+        console.error("Error al consultar clientes en MongoDB:", error);
+        res.status(500).json({ error: "Error al recuperar usuarios de la base de datos." });
+    }
 });
 
+// POST: Cambiar plan de usuario (Gratis <-> Premium)
+app.post('/api/admin/cambiar-plan', async (req, res) => {
+    const tokenAdmin = req.headers['x-admin-token'];
+    const MI_CLAVE_SECRETA = process.env.ADMIN_SECRET_KEY || "MarinaRabino1995";
+
+    if (tokenAdmin !== MI_CLAVE_SECRETA) {
+        return res.status(403).json({ error: "No tienes permisos para modificar planes." });
+    }
+
+    const { userId, nuevoPlan } = req.body;
+
+    try {
+        const usuario = await Usuario.findOne({
+            $or: [
+                { _id: mongoose.Types.ObjectId.isValid(userId) ? userId : null },
+                { email: userId }
+            ]
+        });
+
+        if (!usuario) {
+            return res.status(404).json({ error: "Usuario no encontrado." });
+        }
+
+        usuario.plan = nuevoPlan;
+        await usuario.save();
+
+        res.json({ mensaje: `Plan de ${usuario.nombre} actualizado a ${nuevoPlan} exitosamente.`, usuario });
+    } catch (error) {
+        console.error("Error al actualizar plan:", error);
+        res.status(500).json({ error: "Error al actualizar el plan en la base de datos." });
+    }
+});
+
+// POST: Registrar nuevo usuario o sumarle tiradas desde la app
+app.post('/api/usuarios/registrar', async (req, res) => {
+    const { nombre, email } = req.body;
+    if (!email) return res.status(400).json({ error: "El email es requerido." });
+
+    try {
+        let usuario = await Usuario.findOne({ email });
+        if (!usuario) {
+            usuario = new Usuario({
+                nombre: nombre || 'Consultante Místico',
+                email: email,
+                plan: 'Gratis',
+                totalTiradas: 1
+            });
+        } else {
+            usuario.totalTiradas += 1;
+            usuario.ultimaConexion = new Date().toISOString().split('T')[0];
+        }
+        await usuario.save();
+        res.json({ mensaje: 'Usuario registrado/actualizado', usuario });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Levantar el servidor
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log("SERVIDOR MÍSTICO ACTUALIZADO Y CORRIENDO EN PUERTO " + PORT);
+    console.log("🚀 SERVIDOR MÍSTICO CONECTADO A MONGODB CORRIENDO EN PUERTO " + PORT);
 });
