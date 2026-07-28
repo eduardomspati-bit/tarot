@@ -18,7 +18,7 @@ const MONGO_URI = process.env.MONGO_URI;
 if (MONGO_URI) {
     mongoose.connect(MONGO_URI)
         .then(() => console.log('🔮 Conectado exitosamente a MongoDB Atlas'))
-        .catch(err => console.error('❌ Error de conexión a MongoDB:', err));
+        .catch(err => console.error('❌ Error de conexión a MongoDB:', err.message));
 } else {
     console.warn('⚠️ MONGO_URI no está configurada en las variables de entorno.');
 }
@@ -261,20 +261,23 @@ app.get('/api/admin/clientes', async (req, res) => {
     }
 
     try {
-        // Verificar si Mongoose está definido y conectado
-        if (!mongoose || mongoose.connection.readyState !== 1) {
-            console.error("❌ MongoDB no está conectado. Estado de conexión:", mongoose ? mongoose.connection.readyState : "Mongoose no definido");
-            return res.status(500).json({ error: "La base de datos MongoDB no está conectada." });
+        // Verificar si la conexión con Mongo está lista (1 = Conectado)
+        if (mongoose.connection.readyState !== 1) {
+            console.error("❌ Intento de consulta sin conexión activa a MongoDB");
+            return res.status(500).json({ 
+                error: "Error de conexión con la base de datos.", 
+                detalle: "Comprueba que la variable MONGO_URI esté configurada correctamente en Render." 
+            });
         }
 
-        // Consultamos la base de datos de MongoDB
-        const usuariosDB = await Usuario.find().lean(); // .lean() mejora el rendimiento y devuelve objetos JS simples
+        // Consultamos la base de datos
+        const usuariosDB = await Usuario.find().lean().sort({ updatedAt: -1 });
 
-        // Mapeamos los campos con valores por defecto por si alguno viene undefined
+        // Mapeo seguro con valores por defecto
         const clientesFormateados = (usuariosDB || []).map(u => ({
             id: u._id ? u._id.toString() : '',
-            nombre: u.nombre || 'Consultante Anonimo',
-            email: u.email || 'sin-email@ejemplo.com',
+            nombre: u.nombre || 'Consultante Anónimo',
+            email: u.email || 'sin-email',
             plan: u.plan || 'Gratis',
             totalTiradas: typeof u.totalTiradas === 'number' ? u.totalTiradas : 0,
             ultimaConexion: u.ultimaConexion || (u.updatedAt ? new Date(u.updatedAt).toLocaleDateString() : 'Hoy')
@@ -283,7 +286,7 @@ app.get('/api/admin/clientes', async (req, res) => {
         return res.json({ clientes: clientesFormateados });
 
     } catch (error) {
-        console.error("❌ Error grave al consultar clientes en MongoDB:", error.message);
+        console.error("❌ Error al consultar clientes en MongoDB:", error.message);
         return res.status(500).json({ 
             error: "Error al recuperar usuarios de la base de datos.",
             detalle: error.message 
@@ -303,12 +306,12 @@ app.post('/api/admin/cambiar-plan', async (req, res) => {
     const { userId, nuevoPlan } = req.body;
 
     if (!userId || !nuevoPlan) {
-        return res.status(400).json({ error: "Faltan datos requeridos (userId o nuevoPlan)." });
+        return res.status(400).json({ error: "Faltan datos (userId o nuevoPlan)." });
     }
 
     try {
         const esValidoId = mongoose.Types.ObjectId.isValid(userId);
-        
+
         const usuario = await Usuario.findOne({
             $or: [
                 esValidoId ? { _id: userId } : null,
@@ -342,8 +345,7 @@ app.post('/api/usuarios/registrar', async (req, res) => {
                 nombre: nombre || 'Consultante Místico',
                 email: email,
                 plan: 'Gratis',
-                totalTiradas: 1,
-                ultimaConexion: new Date().toISOString().split('T')[0]
+                totalTiradas: 1
             });
         } else {
             usuario.totalTiradas = (usuario.totalTiradas || 0) + 1;
@@ -360,5 +362,5 @@ app.post('/api/usuarios/registrar', async (req, res) => {
 // Levantar el servidor
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log("🚀 SERVIDOR MÍSTICO CONECTADO A MONGODB CORRIENDO EN PUERTO " + PORT);
+    console.log("🚀 SERVIDOR MÍSTICO CORRIENDO EN PUERTO " + PORT);
 });
