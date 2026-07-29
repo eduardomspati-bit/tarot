@@ -213,7 +213,7 @@ REGLAS DE RESPUESTA:
 4. Devuelve el texto limpio, usando solo etiquetas HTML <p> o <ul>/<li> básicas para estructurar el contenido.`;
 
         const cuerpoPeticion = {
-            model: "llama-3.3-70b-versatile",
+            model: "qwen/qwen-2.5-72b-instruct",
             messages: [
                 { role: "system", content: promptSistemaRepregunta },
                 { role: "user", content: repregunta }
