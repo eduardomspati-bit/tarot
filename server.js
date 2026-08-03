@@ -4,7 +4,17 @@ const mongoose = require('mongoose');
 require('dotenv').config();
 
 const app = express();
-app.use(cors());
+// ✅ AHORA poné esto:
+app.use(cors({
+    origin: [
+        'https://tarotia-app-psi.github.io',
+        'http://localhost:3000',
+        'http://127.0.0.1:5500'
+    ],
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-admin-token'],
+    credentials: true
+}));
 app.use(express.json());
 
 // Servir archivos estáticos HTML/JS
