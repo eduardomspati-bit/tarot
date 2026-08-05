@@ -74,7 +74,7 @@ app.post('/tirada', async (req, res) => {
         if (!a || !b || !c || !d) {
             return res.status(400).json({ error: "Faltan cartas para realizar la tirada." });
         }
-        
+
         let promptSistema = "";
 
         if (estilo === 'manual') {
@@ -83,84 +83,66 @@ Tu tarea exclusiva es analizar las dos duplas de cartas que te presenta el usuar
 - Dupla 1: ${a} y ${b}
 - Dupla 2: ${c} y ${d}
 
-Para cada dupla, debes proporcionar de 3 a 4 posibles interpretaciones o significados prácticos y objetivos de su combinación.
-Reglas estrictas que debes cumplir:
-1. No redactes párrafos largos de narrativa poética o mística.
-2. No des consejos directos al consultante.
-3. Mantén un tono neutro, analítico e instructivo.
-4. ESTÁ TERMINANTEMENTE PROHIBIDO relacionar la Dupla 1 con la Dupla 2. Analízalas por separado.
-
 Devuelve la respuesta estructurada ESTRICTAMENTE en formato HTML de la siguiente manera:
 
 <div class="reading-section">
     <h3>🌿 Dupla 1: ${a} + ${b}</h3>
     <ul>
-        <li><strong>Significado 1:</strong> [Significado práctico y objetivo breve]</li>
-        <li><strong>Significado 2:</strong> [Significado práctico y objetivo breve]</li>
-        <li><strong>Significado 3:</strong> [Significado práctico y objetivo breve]</li>
+        <li><strong>Significado 1:</strong> [Significado práctico]</li>
+        <li><strong>Significado 2:</strong> [Significado práctico]</li>
+        <li><strong>Significado 3:</strong> [Significado práctico]</li>
     </ul>
 </div>
 
 <div class="reading-section">
     <h3>🌿 Dupla 2: ${c} + ${d}</h3>
     <ul>
-        <li><strong>Significado 1:</strong> [Significado práctico y objetivo breve]</li>
-        <li><strong>Significado 2:</strong> [Significado práctico y objetivo breve]</li>
-        <li><strong>Significado 3:</strong> [Significado práctico y objetivo breve]</li>
+        <li><strong>Significado 1:</strong> [Significado práctico]</li>
+        <li><strong>Significado 2:</strong> [Significado práctico]</li>
+        <li><strong>Significado 3:</strong> [Significado práctico]</li>
     </ul>
 </div>`;
         } else {
             let instruccionesPersonalidad = (estilo === 'morgana' || estilo === 'magico')
-                ? "Eres Morgana, una experta, asertiva y ancestral lectora de Tarot Rider-Waite, especializada en un método predictivo de lectura por duplas. Tu tono debe ser místico, seguro, directo, terrenal y al grano. Ofreces consejos prácticos y predictivos."
-                : "Eres un terapeuta y experto lector de Tarot Rider-Waite enfocado en el Tarot Terapéutico, Psicológico y Evolutivo. Tu tono debe ser reflexivo, psicológico, empático, constructivo y reconfortante.";
+                ? "Eres Morgana, una experta y asertiva lectora de Tarot Rider-Waite. Tu tono es directo, místico y predictivo."
+                : "Eres un terapeuta y experto lector de Tarot Evolutivo. Tu tono es empático, reflexivo y psicológico.";
 
             const reglasFormato = `
-Evita palabras demasiado rebuscadas. NO uses listas, viñetas, guiones ni asteriscos (*).
+NO uses listas, viñetas, guiones ni asteriscos (*).
 
-Estructura siguiendo estas reglas:
-1. La primera dupla representa el ESTADO ACTUAL o el PASADO INMEDIATO.
-2. La segunda dupla representa el FUTURO A CORTO O MEDIANO PLAZO.
-3. En base a este viaje, arriesga 2 o 3 PREDICCIONES o REVELACIONES CONCRETAS.
-
-Devuelve la respuesta EXACTAMENTE en este formato HTML:
+Devuelve la respuesta EXACTAMENTE en este formato HTML (comienza directamente con el primer div):
 
 <div class="reading-section">
     <h3>El Presente y Origen (${a} + ${b})</h3>
-    <p>[Interpretación de la primera dupla en base al tema]</p>
+    <p>[Interpretación estado actual]</p>
 </div>
 
 <div class="reading-section">
     <h3>El Camino hacia el Futuro (${c} + ${d})</h3>
-    <p>[Interpretación de la segunda dupla]</p>
+    <p>[Interpretación futuro a corto plazo]</p>
 </div>
 
 <div class="reading-section">
     <h3>Predicciones del Oráculo</h3>
-    <p>[Revelaciones o predicciones concretas en un párrafo corrido]</p>
+    <p>[2 o 3 predicciones concretas en un solo párrafo]</p>
 </div>
 
 <div class="reading-section">
     <h3>Consejo y Conclusión</h3>
-    <p><span id="conclusion">[Frase inspiradora y consejo final]</span></p>
+    <p><span id="conclusion">[Frase de cierre y consejo final]</span></p>
 </div>`;
 
             promptSistema = instruccionesPersonalidad + reglasFormato;
         }
-        
+
         const promptUsuario = (tema === 'Pregunta Específica' && pregunta)
-            ? `El consultante tiene una PREGUNTA ESPECÍFICA: "${pregunta}". Orientá tu análisis a responder directamente a esa duda. Las cartas seleccionadas son: ${a}, ${b}, ${c} y ${d}.`
-            : `Realiza la lectura sobre el tema general: ${tema}. Las cartas seleccionadas son: ${a}, ${b}, ${c} y ${d}.`;
+            ? `Pregunta específica: "${pregunta}". Cartas: ${a}, ${b}, ${c} y ${d}.`
+            : `Tema general: ${tema}. Cartas: ${a}, ${b}, ${c} y ${d}.`;
 
-        if (!API_KEY) {
-            console.error("❌ ERROR: Variable de entorno de API Key no configurada.");
-            return res.status(500).json({ error: "No se encontró la configuración de clave de API en el servidor." });
-        }
-
-        // Uso de fetch nativo de Node.js
         const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
             method: "POST",
             headers: {
-                "Authorization": `Bearer ${API_KEY}`,
+                "Authorization": "Bearer " + API_KEY,
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
@@ -170,25 +152,43 @@ Devuelve la respuesta EXACTAMENTE en este formato HTML:
                     { role: "user", content: promptUsuario }
                 ],
                 temperature: estilo === 'manual' ? 0.3 : 0.7,
-                reasoning_format: "hidden"
+                max_tokens: 2048
             })
         });
 
         const data = await response.json();
-        
+
         if (!response.ok || !data.choices || data.choices.length === 0) {
-            console.error("❌ Error devuelto por Groq API:", data);
-            return res.status(response.status || 500).json({ 
-                error: "Respuesta incompleta de Groq", 
-                detalle: data.error?.message || "Respuesta inválida" 
-            });
+            console.error("❌ Error de Groq:", data);
+            return res.status(500).json({ error: "La API de Groq no devolvió contenido." });
         }
 
-        let text = limpiarRazonamiento(data.choices[0].message.content || "");
-        res.json({ lectura: text });
+        let rawText = data.choices[0].message.content || "";
+
+        // 1. Intentar extraer solo el bloque HTML a partir del primer <div
+        let htmlLimpio = "";
+        const inicioHtml = rawText.indexOf("<div");
+
+        if (inicioHtml !== -1) {
+            htmlLimpio = rawText.substring(inicioHtml);
+        } else {
+            // Si el modelo no usó <div, limpiamos las etiquetas de razonamiento
+            htmlLimpio = rawText.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+        }
+
+        // 2. Limpieza de bloques markdown
+        htmlLimpio = htmlLimpio.replace(/```html/g, "").replace(/```/g, "").trim();
+
+        // 3. Control de seguridad para evitar enviar respuestas vacías al frontend
+        if (!htmlLimpio) {
+            console.error("⚠️ El filtro dejó el texto vacío. Texto original de la IA:", rawText);
+            return res.status(500).json({ error: "No se pudo formatear la interpretación del oráculo. Intenta nuevamente." });
+        }
+
+        res.json({ lectura: htmlLimpio });
 
     } catch (error) {
-        console.error("💥 Error en endpoint /tirada:", error);
+        console.error("💥 Error en /tirada:", error);
         res.status(500).json({ error: "Error en el servidor místico", detalles: error.message });
     }
 });
