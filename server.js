@@ -54,10 +54,12 @@ const UsuarioSchema = new mongoose.Schema({
 const Usuario = mongoose.models.Usuario || mongoose.model('Usuario', UsuarioSchema);
 
 // Clave de Groq guardada en las variables de entorno
-const API_KEY = process.env.GROQ_API_KEY;
-
-// Definimos la ID correcta del modelo en Groq
-const MODEL_NAME = "qwen-3.6-27b-instruct"; // O "qwen-3.6-27b" según la recomendación exacta de tu panel de Groq
+// ==========================================
+// CONFIGURACIÓN DE MODELO GROQ
+// ==========================================
+// Usa la ID válida de Qwen en Groq (ej: "qwen-2.5-coder-32b" o "qwen-2.5-72b-instruct")
+const MODEL_NAME = "qwen-2.5-coder-32b"; 
+const API_KEY = process.env.GROQ_API_KEY || process.env.API_KEY;
 
 // ==========================================
 // 3. ENDPOINT PRINCIPAL DE TIRADAS DE TAROT
@@ -126,12 +128,12 @@ Debes estructurar la interpretación siguiendo estrictamente estas reglas basada
 Devuelve la respuesta EXACTAMENTE en este formato HTML (comienza directamente con las etiquetas div, sin saludos ni introducciones):
 
 <div class="reading-section">
-    <h3>El Presente y Origen (` + a + ` + ` + b + `)</h3>
+    <h3>El Presente y Origen (${a} + ${b})</h3>
     <p>[Aquí interpreta la primera dupla explicando el estado actual o pasado inmediato de la situación en base al tema elegido]</p>
 </div>
 
 <div class="reading-section">
-    <h3>El Camino hacia el Futuro (` + c + ` + ` + d + `)</h3>
+    <h3>El Camino hacia el Futuro (${c} + ${d})</h3>
     <p>[Aquí interpreta la segunda dupla revealing hacia dónde se dirige la situación a corto o mediano plazo]</p>
 </div>
 
@@ -150,9 +152,9 @@ Devuelve la respuesta EXACTAMENTE en este formato HTML (comienza directamente co
         
         let promptUsuario = "";
         if (tema === 'Pregunta Específica' && pregunta) {
-            promptUsuario = "El consultante tiene una PREGUNTA ESPECÍFICA: \"" + pregunta + "\". Realiza la lectura de Tarot orientando TODO tu análisis a responder directamente a esa duda. Las cartas seleccionadas son: " + a + ", " + b + ", " + c + " y " + d + ".";
+            promptUsuario = `El consultante tiene una PREGUNTA ESPECÍFICA: "${pregunta}". Realiza la lectura de Tarot orientando TODO tu análisis a responder directamente a esa duda. Las cartas seleccionadas son: ${a}, ${b}, ${c} y ${d}.`;
         } else {
-            promptUsuario = "Realiza la lectura de Tarot sobre el tema general: " + tema + ". Las cartas seleccionadas son: " + a + ", " + b + ", " + c + " y " + d + ".";
+            promptUsuario = `Realiza la lectura de Tarot sobre el tema general: ${tema}. Las cartas seleccionadas son: ${a}, ${b}, ${c} y ${d}.`;
         }
 
         const cuerpoPeticion = {
@@ -165,7 +167,7 @@ Devuelve la respuesta EXACTAMENTE en este formato HTML (comienza directamente co
         };
 
         if (!API_KEY) {
-            console.error("❌ ERROR: La variable de entorno GROQ_API_KEY no está configurada.");
+            console.error("❌ ERROR: La variable de entorno GROQ_API_KEY / API_KEY no está configurada.");
             return res.status(500).json({ error: "No se encontró la configuración de clave de API en el servidor." });
         }
 
@@ -180,13 +182,16 @@ Devuelve la respuesta EXACTAMENTE en este formato HTML (comienza directamente co
 
         const data = await response.json();
         
-        if (!data.choices || data.choices.length === 0) {
-            console.error("Respuesta inválida de Groq API:", data);
-            throw new Error("Respuesta incompleta de Groq");
+        if (!response.ok || !data.choices || data.choices.length === 0) {
+            console.error("❌ Error devuelto por Groq API:", data);
+            return res.status(response.status || 500).json({ 
+                error: "Respuesta incompleta de Groq", 
+                detalle: data.error?.message || "Respuesta inválida" 
+            });
         }
 
         let text = data.choices[0].message.content;
-        text = text.replace(/```html/g, "").replace(/```/g, "").replace(/html/g, "");
+        text = text.replace(/```html/g, "").replace(/```/g, "").replace(/html/g, "").trim();
 
         res.json({ lectura: text });
 
@@ -252,12 +257,16 @@ REGLAS DE RESPUESTA:
 
         const data = await response.json();
         
-        if (!data.choices || data.choices.length === 0) {
-             throw new Error("Respuesta incompleta de Groq en repregunta");
+        if (!response.ok || !data.choices || data.choices.length === 0) {
+            console.error("❌ Error devuelto por Groq en /repregunta:", data);
+            return res.status(response.status || 500).json({ 
+                error: "Respuesta incompleta de Groq en repregunta", 
+                detalle: data.error?.message || "Respuesta inválida" 
+            });
         }
 
         let respuestaIA = data.choices[0].message.content;
-        respuestaIA = respuestaIA.replace(/```html/g, "").replace(/```/g, "").replace(/html/g, "");
+        respuestaIA = respuestaIA.replace(/```html/g, "").replace(/```/g, "").replace(/html/g, "").trim();
 
         res.json({ respuesta: respuestaIA });
 
