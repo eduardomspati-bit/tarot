@@ -56,7 +56,7 @@ const Usuario = mongoose.models.Usuario || mongoose.model('Usuario', UsuarioSche
 // Clave de Groq guardada en las variables de entorno
 const API_KEY = process.env.GROQ_API_KEY;
 
-// Variable global para configurar el modelo fácilmente
+// Definimos la variable global para Qwen
 const MODEL_NAME = "qwen/qwen-2.5-72b-instruct";
 
 // ==========================================
@@ -70,12 +70,8 @@ app.post('/tirada', async (req, res) => {
             return res.status(400).json({ error: "Faltan cartas para realizar la tirada." });
         }
 
-        if (!API_KEY) {
-            console.error("❌ ERROR: La variable de entorno API_KEY no está configurada.");
-            return res.status(500).json({ error: "No se encontró la configuración de clave de API en el servidor." });
-        }
-
         const { default: fetch } = await import('node-fetch');
+        
         let promptSistema = "";
 
         if (estilo === 'manual') {
@@ -130,13 +126,13 @@ Debes estructurar la interpretación siguiendo estrictamente estas reglas basada
 Devuelve la respuesta EXACTAMENTE en este formato HTML (comienza directamente con las etiquetas div, sin saludos ni introducciones):
 
 <div class="reading-section">
-    <h3>El Presente y Origen (${a} + ${b})</h3>
+    <h3>El Presente y Origen (` + a + ` + ` + b + `)</h3>
     <p>[Aquí interpreta la primera dupla explicando el estado actual o pasado inmediato de la situación en base al tema elegido]</p>
 </div>
 
 <div class="reading-section">
-    <h3>El Camino hacia el Futuro (${c} + ${d})</h3>
-    <p>[Aquí interpreta la segunda dupla revelando hacia dónde se dirige la situación a corto o mediano plazo]</p>
+    <h3>El Camino hacia el Futuro (` + c + ` + ` + d + `)</h3>
+    <p>[Aquí interpreta la segunda dupla revealing hacia dónde se dirige la situación a corto o mediano plazo]</p>
 </div>
 
 <div class="reading-section">
@@ -151,12 +147,12 @@ Devuelve la respuesta EXACTAMENTE en este formato HTML (comienza directamente co
 
             promptSistema = instruccionesPersonalidad + reglasFormato;
         }
-
+        
         let promptUsuario = "";
         if (tema === 'Pregunta Específica' && pregunta) {
-            promptUsuario = `El consultante tiene una PREGUNTA ESPECÍFICA: "${pregunta}". Realiza la lectura de Tarot orientando TODO tu análisis a responder directamente a esa duda. Las cartas seleccionadas son: ${a}, ${b}, ${c} y ${d}.`;
+            promptUsuario = "El consultante tiene una PREGUNTA ESPECÍFICA: \"" + pregunta + "\". Realiza la lectura de Tarot orientando TODO tu análisis a responder directamente a esa duda. Las cartas seleccionadas son: " + a + ", " + b + ", " + c + " y " + d + ".";
         } else {
-            promptUsuario = `Realiza la lectura de Tarot sobre el tema general: ${tema}. Las cartas seleccionadas son: ${a}, ${b}, ${c} y ${d}.`;
+            promptUsuario = "Realiza la lectura de Tarot sobre el tema general: " + tema + ". Las cartas seleccionadas son: " + a + ", " + b + ", " + c + " y " + d + ".";
         }
 
         const cuerpoPeticion = {
@@ -165,10 +161,16 @@ Devuelve la respuesta EXACTAMENTE en este formato HTML (comienza directamente co
                 { role: "system", content: promptSistema },
                 { role: "user", content: promptUsuario }
             ],
-            temperature: estilo === 'manual' ? 0.3 : 0.7
+            temperature: estilo === 'manual' ? 0.3 : 0.7 
         };
 
-        const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        if (!API_KEY) {
+            console.error("❌ ERROR: La variable de entorno API_KEY no está configurada.");
+            return res.status(500).json({ error: "No se encontró la configuración de clave de API en el servidor." });
+        }
+
+        // Petición al endpoint de OpenRouter (compatible con la estructura OpenAI/Groq)
+        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
             method: "POST",
             headers: {
                 "Authorization": "Bearer " + API_KEY,
@@ -178,14 +180,14 @@ Devuelve la respuesta EXACTAMENTE en este formato HTML (comienza directamente co
         });
 
         const data = await response.json();
-
-        if (!response.ok) {
-            console.error("❌ Error devuelto por la API en /tirada:", data);
-            return res.status(response.status).json({ error: "Error en el proveedor de IA", detalle: data.error?.message });
+        
+        if (!data.choices || data.choices.length === 0) {
+            console.error("Respuesta inválida de la API:", data);
+            throw new Error("Respuesta incompleta de la API");
         }
 
         let text = data.choices[0].message.content;
-        text = text.replace(/^```html\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/g, "").trim();
+        text = text.replace(/```html/g, "").replace(/```/g, "").replace(/html/g, "").trim();
 
         res.json({ lectura: text });
 
@@ -206,10 +208,6 @@ app.post('/repregunta', async (req, res) => {
     }
 
     try {
-        if (!API_KEY) {
-            return res.status(500).json({ error: "No se encontró la configuración de clave de API en el servidor." });
-        }
-
         const { default: fetch } = await import('node-fetch');
 
         let personalidadMistica = "";
@@ -244,7 +242,7 @@ REGLAS DE RESPUESTA:
             temperature: 0.7
         };
 
-        const response = await fetch("[https://api.groq.com/openai/v1/chat/completions](https://api.groq.com/openai/v1/chat/completions)", {
+        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
             method: "POST",
             headers: {
                 "Authorization": "Bearer " + API_KEY,
@@ -254,14 +252,13 @@ REGLAS DE RESPUESTA:
         });
 
         const data = await response.json();
-
-        if (!response.ok) {
-            console.error("❌ Error devuelto por la API en /repregunta:", data);
-            return res.status(response.status).json({ error: "Error en el proveedor de IA", detalle: data.error?.message });
+        
+        if (!data.choices || data.choices.length === 0) {
+             throw new Error("Respuesta incompleta de la API en repregunta");
         }
 
         let respuestaIA = data.choices[0].message.content;
-        respuestaIA = respuestaIA.replace(/^```html\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/g, "").trim();
+        respuestaIA = respuestaIA.replace(/```html/g, "").replace(/```/g, "").replace(/html/g, "").trim();
 
         res.json({ respuesta: respuestaIA });
 
@@ -271,87 +268,13 @@ REGLAS DE RESPUESTA:
     }
 });
 
-// GET: Obtener lista de clientes desde MongoDB Atlas
-app.get('/api/admin/clientes', async (req, res) => {
-    const tokenAdmin = req.headers['x-admin-token'];
-    const MI_CLAVE_SECRETA = process.env.ADMIN_SECRET_KEY || "MarinaRabino1995";
 
-    if (tokenAdmin !== MI_CLAVE_SECRETA) {
-        return res.status(403).json({ error: "No tienes permisos para ver estos datos místicos." });
-    }
+// ==========================================
 
-    try {
-        // Verificar si la conexión con Mongo está lista (1 = Conectado)
-        if (mongoose.connection.readyState !== 1) {
-            console.error("❌ Intento de consulta sin conexión activa a MongoDB");
-            return res.status(500).json({ 
-                error: "Error de conexión con la base de datos.", 
-                detalle: "Comprueba que la variable MONGO_URI esté configurada correctamente en Render." 
-            });
-        }
+// 5. ENDPOINTS DE ADMINISTRACIÓN Y BASE DE DATOS
 
-        // Consultamos la base de datos
-        const usuariosDB = await Usuario.find().lean().sort({ updatedAt: -1 });
+// ==========================================" 
 
-        // Mapeo seguro con valores por defecto
-        const clientesFormateados = (usuariosDB || []).map(u => ({
-            id: u._id ? u._id.toString() : '',
-            nombre: u.nombre || 'Consultante Anónimo',
-            email: u.email || 'sin-email',
-            plan: u.plan || 'Gratis',
-            totalTiradas: typeof u.totalTiradas === 'number' ? u.totalTiradas : 0,
-            ultimaConexion: u.ultimaConexion || (u.updatedAt ? new Date(u.updatedAt).toLocaleDateString() : 'Hoy')
-        }));
-
-        return res.json({ clientes: clientesFormateados });
-
-    } catch (error) {
-        console.error("❌ Error al consultar clientes en MongoDB:", error.message);
-        return res.status(500).json({ 
-            error: "Error al recuperar usuarios de la base de datos.",
-            detalle: error.message 
-        });
-    }
-});
-
-// POST: Cambiar plan de usuario (Gratis <-> Premium)
-app.post('/api/admin/cambiar-plan', async (req, res) => {
-    const tokenAdmin = req.headers['x-admin-token'];
-    const MI_CLAVE_SECRETA = process.env.ADMIN_SECRET_KEY || "MarinaRabino1995";
-
-    if (tokenAdmin !== MI_CLAVE_SECRETA) {
-        return res.status(403).json({ error: "No tienes permisos para modificar planes." });
-    }
-
-    const { userId, nuevoPlan } = req.body;
-
-    if (!userId || !nuevoPlan) {
-        return res.status(400).json({ error: "Faltan datos (userId o nuevoPlan)." });
-    }
-
-    try {
-        const esValidoId = mongoose.Types.ObjectId.isValid(userId);
-
-        const usuario = await Usuario.findOne({
-            $or: [
-                esValidoId ? { _id: userId } : null,
-                { email: userId }
-            ].filter(Boolean)
-        });
-
-        if (!usuario) {
-            return res.status(404).json({ error: "Usuario no encontrado." });
-        }
-
-        usuario.plan = nuevoPlan;
-        await usuario.save();
-
-        return res.json({ mensaje: `Plan de ${usuario.nombre} actualizado a ${nuevoPlan} exitosamente.`, usuario });
-    } catch (error) {
-        console.error("❌ Error al actualizar plan:", error.message);
-        return res.status(500).json({ error: "Error al actualizar el plan en la base de datos." });
-    }
-});
 
 // POST: Registrar nuevo usuario o sumarle tiradas desde la app
 app.post('/api/usuarios/registrar', async (req, res) => {
