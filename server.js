@@ -16,15 +16,8 @@ const corsOptions = {
     credentials: true
 };
 
-// Aplicar CORS a todas las rutas
 app.use(cors(corsOptions));
-
-// 🚨 IMPORTANTE: Responder a todas las peticiones Preflight (OPTIONS)
-app.options('*', cors(corsOptions));
-
 app.use(express.json());
-
-// Servir archivos estáticos HTML/JS
 app.use(express.static(__dirname));
 
 // ==========================================
@@ -41,7 +34,7 @@ if (MONGO_URI) {
 }
 
 // ==========================================
-// 2. MODELO DE DATOS DE USUARIOS EN MONGODB
+// 2. MODELO DE DATOS
 // ==========================================
 const UsuarioSchema = new mongoose.Schema({
     nombre: { type: String, required: true },
@@ -53,13 +46,23 @@ const UsuarioSchema = new mongoose.Schema({
 
 const Usuario = mongoose.models.Usuario || mongoose.model('Usuario', UsuarioSchema);
 
-// Clave de Groq guardada en las variables de entorno
-// ==========================================
-// CONFIGURACIÓN DE MODELO GROQ
-// ==========================================
-// Usa la ID válida de Qwen en Groq (ej: "qwen-2.5-coder-32b" o "qwen-2.5-72b-instruct")
 const MODEL_NAME = "qwen/qwen3.6-27b";
 const API_KEY = process.env.GROQ_API_KEY || process.env.API_KEY;
+
+// ==========================================
+// FUNCIÓN AUXILIAR: LIMPIAR RAZONAMIENTO
+// ==========================================
+function limpiarRazonamiento(texto) {
+    if (!texto) return "";
+    
+    // Corregido: Limpieza de etiquetas de pensamiento o bloques
+    texto = texto.replace(/`thinking`[\s\S]*?`/gi, "");
+    texto = texto.replace(/<thinking>[\s\S]*?<\/thinking>/gi, "");
+    texto = texto.replace(/Here['']s a thinking process:[\s\S]*?(?=<div|<p|<ul|<h)/gi, "");
+    texto = texto.replace(/```html/gi, "").replace(/```/g, "").replace(/^html\s*/i, "").trim();
+    
+    return texto;
+}
 
 // ==========================================
 // 3. ENDPOINT PRINCIPAL DE TIRADAS DE TAROT
@@ -71,8 +74,6 @@ app.post('/tirada', async (req, res) => {
         if (!a || !b || !c || !d) {
             return res.status(400).json({ error: "Faltan cartas para realizar la tirada." });
         }
-
-        const { default: fetch } = await import('node-fetch');
         
         let promptSistema = "";
 
@@ -82,14 +83,14 @@ Tu tarea exclusiva es analizar las dos duplas de cartas que te presenta el usuar
 - Dupla 1: ${a} y ${b}
 - Dupla 2: ${c} y ${d}
 
-Para cada dupla, debes proporcionar de 3 a 4 posibles interpretaciones o significados prácticos y objetivos de su combinación (palabras clave, conceptos o direcciones de interpretación).
-Reglas strictly que debes cumplir:
+Para cada dupla, debes proporcionar de 3 a 4 posibles interpretaciones o significados prácticos y objetivos de su combinación.
+Reglas estrictas que debes cumplir:
 1. No redactes párrafos largos de narrativa poética o mística.
-2. No des consejos directos al consultante ("te recomiendo que...", "deberías...").
+2. No des consejos directos al consultante.
 3. Mantén un tono neutro, analítico e instructivo.
 4. ESTÁ TERMINANTEMENTE PROHIBIDO relacionar la Dupla 1 con la Dupla 2. Analízalas por separado.
 
-Devuelve la respuesta estructurada ESTRICTAMENTE en formato HTML de la siguiente manera (comienza directamente con el HTML, sin saludos ni introducciones):
+Devuelve la respuesta estructurada ESTRICTAMENTE en formato HTML de la siguiente manera:
 
 <div class="reading-section">
     <h3>🌿 Dupla 1: ${a} + ${b}</h3>
@@ -109,75 +110,68 @@ Devuelve la respuesta estructurada ESTRICTAMENTE en formato HTML de la siguiente
     </ul>
 </div>`;
         } else {
-            let instruccionesPersonalidad = "";
-
-            if (estilo === 'morgana' || estilo === 'magico') {
-                instruccionesPersonalidad = "Eres Morgana, una experta, asertiva y ancestral lectora de Tarot Rider-Waite, especializada en un método predictivo de lectura por duplas. Tu tono debe ser místico, seguro, directo, terrenal y al grano, sin rodeos filosóficos o abstractos. Ofreces consejos sumamente prácticos y predictivos para la vida cotidiana de tu consultante en base a lo que dictan las cartas. Evita introducciones largas o saludos; ve directo al hueso de la interpretación de forma firme y asertiva.";
-            } else {
-                instruccionesPersonalidad = "Eres un terapeuta y experto lector de Tarot Rider-Waite enfocado en el Tarot Terapéutico, Psicológico y Evolutivo, especializado en un método de lectura por duplas. Tu tono debe ser reflexivo, psicológico, empático, constructivo y reconfortante. No haces predicciones fatalistas ni simplistas; utilizas los arquetipos e imágenes de las cartas para guiar al consultante hacia el autoconocimiento, la reflexión interna profunda, la sabiduría espiritual y su crecimiento personal.";
-            }
+            let instruccionesPersonalidad = (estilo === 'morgana' || estilo === 'magico')
+                ? "Eres Morgana, una experta, asertiva y ancestral lectora de Tarot Rider-Waite, especializada en un método predictivo de lectura por duplas. Tu tono debe ser místico, seguro, directo, terrenal y al grano. Ofreces consejos prácticos y predictivos."
+                : "Eres un terapeuta y experto lector de Tarot Rider-Waite enfocado en el Tarot Terapéutico, Psicológico y Evolutivo. Tu tono debe ser reflexivo, psicológico, empático, constructivo y reconfortante.";
 
             const reglasFormato = `
-Evita palabras demasiado rebuscadas para que la lectura sea fluida al ser leída en voz alta. NO uses listas, viñetas, guiones ni asteriscos (*).
+Evita palabras demasiado rebuscadas. NO uses listas, viñetas, guiones ni asteriscos (*).
 
-Debes estructurar la interpretación siguiendo estrictamente estas reglas basadas en el método del consultante:
-1. La primera dupla representa el ESTADO ACTUAL o el PASADO INMEDIATO de la situación.
-2. La segunda dupla representa el FUTURO A CORTO O MEDIANO PLAZO (hacia dónde va la situación).
-3. En base a este viaje en el tiempo, debes arriesgar 2 o 3 PREDICCIONES o REVELACIONES CONCRETAS y posibles para el consultante.
+Estructura siguiendo estas reglas:
+1. La primera dupla representa el ESTADO ACTUAL o el PASADO INMEDIATO.
+2. La segunda dupla representa el FUTURO A CORTO O MEDIANO PLAZO.
+3. En base a este viaje, arriesga 2 o 3 PREDICCIONES o REVELACIONES CONCRETAS.
 
-Devuelve la respuesta EXACTAMENTE en este formato HTML (comienza directamente con las etiquetas div, sin saludos ni introducciones):
+Devuelve la respuesta EXACTAMENTE en este formato HTML:
 
 <div class="reading-section">
     <h3>El Presente y Origen (${a} + ${b})</h3>
-    <p>[Aquí interpreta la primera dupla explicando el estado actual o pasado inmediato de la situación en base al tema elegido]</p>
+    <p>[Interpretación de la primera dupla en base al tema]</p>
 </div>
 
 <div class="reading-section">
     <h3>El Camino hacia el Futuro (${c} + ${d})</h3>
-    <p>[Aquí interpreta la segunda dupla revealing hacia dónde se dirige la situación a corto o mediano plazo]</p>
+    <p>[Interpretación de la segunda dupla]</p>
 </div>
 
 <div class="reading-section">
     <h3>Predicciones del Oráculo</h3>
-    <p>[Aquí lanza esas revelaciones o predicciones concretas y directas que deduces de las cartas combinadas, redactadas en un párrafo de corrido sin usar guiones ni viñetas]</p>
+    <p>[Revelaciones o predicciones concretas en un párrafo corrido]</p>
 </div>
 
 <div class="reading-section">
     <h3>Consejo y Conclusión</h3>
-    <p><span id="conclusion">[Aquí une todo en un cierre potente, una frase inspiradora y el consejo final para el consultante]</span></p>
+    <p><span id="conclusion">[Frase inspiradora y consejo final]</span></p>
 </div>`;
 
             promptSistema = instruccionesPersonalidad + reglasFormato;
         }
         
-        let promptUsuario = "";
-        if (tema === 'Pregunta Específica' && pregunta) {
-            promptUsuario = `El consultante tiene una PREGUNTA ESPECÍFICA: "${pregunta}". Realiza la lectura de Tarot orientando TODO tu análisis a responder directamente a esa duda. Las cartas seleccionadas son: ${a}, ${b}, ${c} y ${d}.`;
-        } else {
-            promptUsuario = `Realiza la lectura de Tarot sobre el tema general: ${tema}. Las cartas seleccionadas son: ${a}, ${b}, ${c} y ${d}.`;
-        }
-
-        const cuerpoPeticion = {
-            model: MODEL_NAME,
-            messages: [
-                { role: "system", content: promptSistema },
-                { role: "user", content: promptUsuario }
-            ],
-            temperature: estilo === 'manual' ? 0.3 : 0.7 
-        };
+        const promptUsuario = (tema === 'Pregunta Específica' && pregunta)
+            ? `El consultante tiene una PREGUNTA ESPECÍFICA: "${pregunta}". Orientá tu análisis a responder directamente a esa duda. Las cartas seleccionadas son: ${a}, ${b}, ${c} y ${d}.`
+            : `Realiza la lectura sobre el tema general: ${tema}. Las cartas seleccionadas son: ${a}, ${b}, ${c} y ${d}.`;
 
         if (!API_KEY) {
-            console.error("❌ ERROR: La variable de entorno GROQ_API_KEY / API_KEY no está configurada.");
+            console.error("❌ ERROR: Variable de entorno de API Key no configurada.");
             return res.status(500).json({ error: "No se encontró la configuración de clave de API en el servidor." });
         }
 
+        // Uso de fetch nativo de Node.js
         const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
             method: "POST",
             headers: {
-                "Authorization": "Bearer " + API_KEY,
+                "Authorization": `Bearer ${API_KEY}`,
                 "Content-Type": "application/json"
             },
-            body: JSON.stringify(cuerpoPeticion)
+            body: JSON.stringify({
+                model: MODEL_NAME,
+                messages: [
+                    { role: "system", content: promptSistema },
+                    { role: "user", content: promptUsuario }
+                ],
+                temperature: estilo === 'manual' ? 0.3 : 0.7,
+                reasoning_format: "hidden"
+            })
         });
 
         const data = await response.json();
@@ -190,13 +184,7 @@ Devuelve la respuesta EXACTAMENTE en este formato HTML (comienza directamente co
             });
         }
 
-        let text = data.choices[0].message.content || "";
-
-        // SOLUCIÓN 1: Filtrado Regex para descartar razonamientos internos o introducciones
-        text = text.replace(/<think>[\s\S]*?<\/think>/gi, "");
-        text = text.replace(/Here's a thinking process:[\s\S]*?(?=<div)/gi, "");
-        text = text.replace(/```html/g, "").replace(/```/g, "").replace(/html/g, "").trim();
-
+        let text = limpiarRazonamiento(data.choices[0].message.content || "");
         res.json({ lectura: text });
 
     } catch (error) {
@@ -206,7 +194,7 @@ Devuelve la respuesta EXACTAMENTE en este formato HTML (comienza directamente co
 });
 
 // ==========================================
-// 4. ENDPOINT PARA RE-PREGUNTAS PREMIUM
+// 4. ENDPOINT PARA RE-PREGUNTAS
 // ==========================================
 app.post('/repregunta', async (req, res) => {
     const { cartas, lecturaAnterior, repregunta, estilo = 'filosofico' } = req.body;
@@ -216,100 +204,82 @@ app.post('/repregunta', async (req, res) => {
     }
 
     try {
-        const { default: fetch } = await import('node-fetch');
-
         let personalidadMistica = "";
         if (estilo === 'manual') {
-            personalidadMistica = "Eres un oráculo analítico y técnico de Tarot. Tu tono en esta respuesta debe ser sumamente claro, estructurado, directo y didáctico para aclarar las dudas sobre las duplas analizadas, sin saludos ceremoniales.";
+            personalidadMistica = "Eres un oráculo analítico y técnico de Tarot. Responde de forma clara, directa y didáctica.";
         } else if (estilo === 'morgana' || estilo === 'magico') {
-            personalidadMistica = "Eres Morgana, la experta, asertiva y ancestral lectora de Tarot Rider-Waite. Tu tono en esta respuesta debe seguir siendo místico, directo, firme y al hueso, sin rodeos ni saludos.";
+            personalidadMistica = "Eres Morgana, la experta y asertiva lectora de Tarot. Mantén un tono místico, directo y firme.";
         } else {
-            personalidadMistica = "Eres el terapeuta y experto lector de Tarot Evolutivo y Psicológico. Tu tono debe seguir siendo empático, reflexivo, espiritual y constructivo.";
+            personalidadMistica = "Eres un terapeuta y experto lector de Tarot Evolutivo. Mantén un tono empático, reflexivo y constructivo.";
         }
 
-        const promptSistemaRepregunta = personalidadMistica + `
-El usuario acaba de leer una interpretación que le diste basándote en cuatro cartas (leídas en dos duplas) y ahora tiene una duda de seguimiento (una re-pregunta).
+        const promptSistemaRepregunta = `${personalidadMistica}
+El usuario tiene una duda de seguimiento sobre su tirada previo.
 
-CONTEXTO HISTÓRICO DE LA SESIÓN:
-- Dupla 1 (Presente/Origen): ${cartas?.a || ''} y ${cartas?.b || ''}
-- Dupla 2 (Camino al Futuro): ${cartas?.c || ''} y ${cartas?.d || ''}
-- Interpretación previa generada: "${lecturaAnterior}"
+CONTEXTO:
+- Dupla 1: ${cartas?.a || ''} y ${cartas?.b || ''}
+- Dupla 2: ${cartas?.c || ''} y ${cartas?.d || ''}
+- Interpretación previa: "${lecturaAnterior}"
 
-REGLAS DE RESPUESTA:
-1. Responde a su nueva duda de forma concisa y enfocada, usando máximo 2 párrafos de corrido o viñetas muy puntuales si es Modo Manual.
+REGLAS:
+1. Responde de forma concisa (máximo 2 párrafos).
 2. NO uses asteriscos (*).
-3. Conéctalo de manera fluida con el significado de las cartas que salieron originalmente y lo que ya le habías dicho. Ve directo al grano, sin dar introducciones vacías ni saludos.
-4. Devuelve el texto limpio, usando solo etiquetas HTML <p> o <ul>/<li> básicas para estructurar el contenido.`;
-
-        const cuerpoPeticion = {
-            model: MODEL_NAME,
-            messages: [
-                { role: "system", content: promptSistemaRepregunta },
-                { role: "user", content: repregunta }
-            ],
-            temperature: 0.7
-        };
+3. Devuelve únicamente HTML básico (<p> o <ul>/<li>).`;
 
         const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
             method: "POST",
             headers: {
-                "Authorization": "Bearer " + API_KEY,
-                "Content-Type": "authorization" ? "Bearer " + API_KEY : "", // Previene cabecera duplicada si aplicara
+                "Authorization": `Bearer ${API_KEY}`,
                 "Content-Type": "application/json"
             },
-            body: JSON.stringify(cuerpoPeticion)
+            body: JSON.stringify({
+                model: MODEL_NAME,
+                messages: [
+                    { role: "system", content: promptSistemaRepregunta },
+                    { role: "user", content: repregunta }
+                ],
+                temperature: 0.7,
+                reasoning_format: "hidden"
+            })
         });
 
         const data = await response.json();
         
         if (!response.ok || !data.choices || data.choices.length === 0) {
-            console.error("❌ Error devuelto por Groq en /repregunta:", data);
             return res.status(response.status || 500).json({ 
                 error: "Respuesta incompleta de Groq en repregunta", 
                 detalle: data.error?.message || "Respuesta inválida" 
             });
         }
 
-        let respuestaIA = data.choices[0].message.content || "";
-
-        // SOLUCIÓN 1: Filtrado Regex
-        respuestaIA = respuestaIA.replace(/<think>[\s\S]*?<\/think>/gi, "");
-        respuestaIA = respuestaIA.replace(/Here's a thinking process:[\s\S]*?(?=<p|<ul|<div)/gi, "");
-        respuestaIA = respuestaIA.replace(/```html/g, "").replace(/```/g, "").replace(/html/g, "").trim();
-
+        let respuestaIA = limpiarRazonamiento(data.choices[0].message.content || "");
         res.json({ respuesta: respuestaIA });
 
     } catch (error) {
         console.error("Error en endpoint /repregunta:", error);
-        res.status(500).json({ error: "La conexión con el plano de las re-preguntas falló." });
+        res.status(500).json({ error: "La conexión con la re-pregunta falló." });
     }
 });
+
 // ==========================================
-
-// 5. ENDPOINTS DE ADMINISTRACIÓN Y BASE DE DATOS
-
-// ==========================================" 
-
-
-// POST: Registrar nuevo usuario o sumarle tiradas desde la app
+// 5. REGISTRO Y ACTUALIZACIÓN ATÓMICA DE USUARIO
+// ==========================================
 app.post('/api/usuarios/registrar', async (req, res) => {
     const { nombre, email } = req.body;
     if (!email) return res.status(400).json({ error: "El email es requerido." });
 
     try {
-        let usuario = await Usuario.findOne({ email });
-        if (!usuario) {
-            usuario = new Usuario({
-                nombre: nombre || 'Consultante Místico',
-                email: email,
-                plan: 'Gratis',
-                totalTiradas: 1
-            });
-        } else {
-            usuario.totalTiradas = (usuario.totalTiradas || 0) + 1;
-            usuario.ultimaConexion = new Date().toISOString().split('T')[0];
-        }
-        await usuario.save();
+        const hoy = new Date().toISOString().split('T')[0];
+        const usuario = await Usuario.findOneAndUpdate(
+            { email },
+            { 
+                $inc: { totalTiradas: 1 },
+                $set: { ultimaConexion: hoy },
+                $setOnInsert: { nombre: nombre || 'Consultante Místico', plan: 'Gratis' }
+            },
+            { new: true, upsert: true }
+        );
+
         return res.json({ mensaje: 'Usuario registrado/actualizado', usuario });
     } catch (error) {
         console.error("❌ Error al registrar usuario:", error.message);
@@ -317,7 +287,6 @@ app.post('/api/usuarios/registrar', async (req, res) => {
     }
 });
 
-// Levantar el servidor
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log("🚀 SERVIDOR MÍSTICO CORRIENDO EN PUERTO " + PORT);
