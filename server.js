@@ -152,47 +152,51 @@ Devuelve la respuesta EXACTAMENTE en este formato HTML (comienza directamente co
                     { role: "user", content: promptUsuario }
                 ],
                 temperature: estilo === 'manual' ? 0.3 : 0.7,
-                max_tokens: 2048
+                max_tokens: 2500 // Otorga espacio suficiente para el razonamiento + la respuesta HTML
             })
         });
 
         const data = await response.json();
 
         if (!response.ok || !data.choices || data.choices.length === 0) {
-            console.error("❌ Error de Groq:", data);
-            return res.status(500).json({ error: "La API de Groq no devolvió contenido." });
+            console.error("❌ Error devuelto por Groq API:", data);
+            return res.status(500).json({ error: "Respuesta incompleta del proveedor de IA" });
         }
 
         let rawText = data.choices[0].message.content || "";
 
-        // 1. Intentar extraer solo el bloque HTML a partir del primer <div
-        let htmlLimpio = "";
-        const inicioHtml = rawText.indexOf("<div");
+        // 🛡️ EXTRACCIÓN ROBUSTA DE HTML
+        let htmlFinal = "";
+        const indexDiv = rawText.indexOf("<div");
 
-        if (inicioHtml !== -1) {
-            htmlLimpio = rawText.substring(inicioHtml);
+        if (indexDiv !== -1) {
+            // Si la IA generó etiquetas <div>, extrae desde el primer <div> en adelante
+            htmlFinal = rawText.substring(indexDiv);
         } else {
-            // Si el modelo no usó <div, limpiamos las etiquetas de razonamiento
-            htmlLimpio = rawText.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+            // Si la IA no colocó <div>, elimina etiquetas de thinking sin romper el resto
+            htmlFinal = rawText
+                .replace(/<think>[\s\S]*?<\/think>/gi, "")
+                .replace(/`thinking`[\s\S]*?`/gi, "")
+                .trim();
         }
 
-        // 2. Limpieza de bloques markdown
-        htmlLimpio = htmlLimpio.replace(/```html/g, "").replace(/```/g, "").trim();
+        // Limpiar sintaxis markdown de código si la hubiese
+        htmlFinal = htmlFinal.replace(/```html/gi, "").replace(/```/g, "").trim();
 
-        // 3. Control de seguridad para evitar enviar respuestas vacías al frontend
-        if (!htmlLimpio) {
-            console.error("⚠️ El filtro dejó el texto vacío. Texto original de la IA:", rawText);
-            return res.status(500).json({ error: "No se pudo formatear la interpretación del oráculo. Intenta nuevamente." });
+        // 🛡️ FALLBACK DE SEGURIDAD
+        if (!htmlFinal) {
+            console.warn("⚠️ La limpieza dejó el texto vacío. Entregando respuesta cruda procesada.");
+            htmlFinal = `<div class="reading-section"><p>${rawText.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p></div>`;
         }
 
-        res.json({ lectura: htmlLimpio });
+        // Se garantiza siempre devolver la propiedad "lectura" con contenido
+        res.json({ lectura: htmlFinal });
 
     } catch (error) {
-        console.error("💥 Error en /tirada:", error);
+        console.error("💥 Error en endpoint /tirada:", error);
         res.status(500).json({ error: "Error en el servidor místico", detalles: error.message });
     }
 });
-
 // ==========================================
 // 4. ENDPOINT PARA RE-PREGUNTAS
 // ==========================================
