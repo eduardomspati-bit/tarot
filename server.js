@@ -58,7 +58,7 @@ const Usuario = mongoose.models.Usuario || mongoose.model('Usuario', UsuarioSche
 // CONFIGURACIÓN DE MODELO GROQ
 // ==========================================
 // Usa la ID válida de Qwen en Groq (ej: "qwen-2.5-coder-32b" o "qwen-2.5-72b-instruct")
-const MODEL_NAME = "qwen-2.5-coder-32b"; 
+const MODEL_NAME = "llama-3.3-70b-versatile";
 const API_KEY = process.env.GROQ_API_KEY || process.env.API_KEY;
 
 // ==========================================
