@@ -56,8 +56,8 @@ const Usuario = mongoose.models.Usuario || mongoose.model('Usuario', UsuarioSche
 // Clave de Groq guardada en las variables de entorno
 const API_KEY = process.env.GROQ_API_KEY;
 
-// Definimos la variable global para Qwen
-const MODEL_NAME = "qwen/qwen-2.5-72b-instruct";
+// Definimos la ID correcta del modelo en Groq
+const MODEL_NAME = "qwen-2.5-72b"; // O "qwen-3.6-27b" según la recomendación exacta de tu panel de Groq
 
 // ==========================================
 // 3. ENDPOINT PRINCIPAL DE TIRADAS DE TAROT
@@ -165,12 +165,11 @@ Devuelve la respuesta EXACTAMENTE en este formato HTML (comienza directamente co
         };
 
         if (!API_KEY) {
-            console.error("❌ ERROR: La variable de entorno API_KEY no está configurada.");
+            console.error("❌ ERROR: La variable de entorno GROQ_API_KEY no está configurada.");
             return res.status(500).json({ error: "No se encontró la configuración de clave de API en el servidor." });
         }
 
-        // Petición al endpoint de OpenRouter (compatible con la estructura OpenAI/Groq)
-        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
             method: "POST",
             headers: {
                 "Authorization": "Bearer " + API_KEY,
@@ -182,12 +181,12 @@ Devuelve la respuesta EXACTAMENTE en este formato HTML (comienza directamente co
         const data = await response.json();
         
         if (!data.choices || data.choices.length === 0) {
-            console.error("Respuesta inválida de la API:", data);
-            throw new Error("Respuesta incompleta de la API");
+            console.error("Respuesta inválida de Groq API:", data);
+            throw new Error("Respuesta incompleta de Groq");
         }
 
         let text = data.choices[0].message.content;
-        text = text.replace(/```html/g, "").replace(/```/g, "").replace(/html/g, "").trim();
+        text = text.replace(/```html/g, "").replace(/```/g, "").replace(/html/g, "");
 
         res.json({ lectura: text });
 
@@ -242,7 +241,7 @@ REGLAS DE RESPUESTA:
             temperature: 0.7
         };
 
-        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
             method: "POST",
             headers: {
                 "Authorization": "Bearer " + API_KEY,
@@ -254,11 +253,11 @@ REGLAS DE RESPUESTA:
         const data = await response.json();
         
         if (!data.choices || data.choices.length === 0) {
-             throw new Error("Respuesta incompleta de la API en repregunta");
+             throw new Error("Respuesta incompleta de Groq en repregunta");
         }
 
         let respuestaIA = data.choices[0].message.content;
-        respuestaIA = respuestaIA.replace(/```html/g, "").replace(/```/g, "").replace(/html/g, "").trim();
+        respuestaIA = respuestaIA.replace(/```html/g, "").replace(/```/g, "").replace(/html/g, "");
 
         res.json({ respuesta: respuestaIA });
 
@@ -267,7 +266,6 @@ REGLAS DE RESPUESTA:
         res.status(500).json({ error: "La conexión con el plano de las re-preguntas falló." });
     }
 });
-
 
 // ==========================================
 
