@@ -57,7 +57,7 @@ const Usuario = mongoose.models.Usuario || mongoose.model('Usuario', UsuarioSche
 const API_KEY = process.env.GROQ_API_KEY;
 
 // Definimos la ID correcta del modelo en Groq
-const MODEL_NAME = "qwen-3.6-27b"; // O "qwen-3.6-27b" según la recomendación exacta de tu panel de Groq
+const MODEL_NAME = "qwen-3.6-27b-instruct"; // O "qwen-3.6-27b" según la recomendación exacta de tu panel de Groq
 
 // ==========================================
 // 3. ENDPOINT PRINCIPAL DE TIRADAS DE TAROT
