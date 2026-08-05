@@ -56,6 +56,9 @@ const Usuario = mongoose.models.Usuario || mongoose.model('Usuario', UsuarioSche
 // Clave de Groq guardada en las variables de entorno
 const API_KEY = process.env.GROQ_API_KEY;
 
+// Variable global para configurar el modelo fácilmente
+const MODEL_NAME = "qwen/qwen-2.5-72b-instruct";
+
 // ==========================================
 // 3. ENDPOINT PRINCIPAL DE TIRADAS DE TAROT
 // ==========================================
@@ -67,8 +70,12 @@ app.post('/tirada', async (req, res) => {
             return res.status(400).json({ error: "Faltan cartas para realizar la tirada." });
         }
 
+        if (!API_KEY) {
+            console.error("❌ ERROR: La variable de entorno API_KEY no está configurada.");
+            return res.status(500).json({ error: "No se encontró la configuración de clave de API en el servidor." });
+        }
+
         const { default: fetch } = await import('node-fetch');
-        
         let promptSistema = "";
 
         if (estilo === 'manual') {
@@ -78,7 +85,7 @@ Tu tarea exclusiva es analizar las dos duplas de cartas que te presenta el usuar
 - Dupla 2: ${c} y ${d}
 
 Para cada dupla, debes proporcionar de 3 a 4 posibles interpretaciones o significados prácticos y objetivos de su combinación (palabras clave, conceptos o direcciones de interpretación).
-Reglas strictly que debes cumplir:
+Reglas estrictas que debes cumplir:
 1. No redactes párrafos largos de narrativa poética o mística.
 2. No des consejos directos al consultante ("te recomiendo que...", "deberías...").
 3. Mantén un tono neutro, analítico e instructivo.
@@ -123,13 +130,13 @@ Debes estructurar la interpretación siguiendo estrictamente estas reglas basada
 Devuelve la respuesta EXACTAMENTE en este formato HTML (comienza directamente con las etiquetas div, sin saludos ni introducciones):
 
 <div class="reading-section">
-    <h3>El Presente y Origen (` + a + ` + ` + b + `)</h3>
+    <h3>El Presente y Origen (${a} + ${b})</h3>
     <p>[Aquí interpreta la primera dupla explicando el estado actual o pasado inmediato de la situación en base al tema elegido]</p>
 </div>
 
 <div class="reading-section">
-    <h3>El Camino hacia el Futuro (` + c + ` + ` + d + `)</h3>
-    <p>[Aquí interpreta la segunda dupla revealing hacia dónde se dirige la situación a corto o mediano plazo]</p>
+    <h3>El Camino hacia el Futuro (${c} + ${d})</h3>
+    <p>[Aquí interpreta la segunda dupla revelando hacia dónde se dirige la situación a corto o mediano plazo]</p>
 </div>
 
 <div class="reading-section">
@@ -144,27 +151,22 @@ Devuelve la respuesta EXACTAMENTE en este formato HTML (comienza directamente co
 
             promptSistema = instruccionesPersonalidad + reglasFormato;
         }
-        
+
         let promptUsuario = "";
         if (tema === 'Pregunta Específica' && pregunta) {
-            promptUsuario = "El consultante tiene una PREGUNTA ESPECÍFICA: \"" + pregunta + "\". Realiza la lectura de Tarot orientando TODO tu análisis a responder directamente a esa duda. Las cartas seleccionadas son: " + a + ", " + b + ", " + c + " y " + d + ".";
+            promptUsuario = `El consultante tiene una PREGUNTA ESPECÍFICA: "${pregunta}". Realiza la lectura de Tarot orientando TODO tu análisis a responder directamente a esa duda. Las cartas seleccionadas son: ${a}, ${b}, ${c} y ${d}.`;
         } else {
-            promptUsuario = "Realiza la lectura de Tarot sobre el tema general: " + tema + ". Las cartas seleccionadas son: " + a + ", " + b + ", " + c + " y " + d + ".";
+            promptUsuario = `Realiza la lectura de Tarot sobre el tema general: ${tema}. Las cartas seleccionadas son: ${a}, ${b}, ${c} y ${d}.`;
         }
 
         const cuerpoPeticion = {
-            model: "llama-3.3-70b-versatile",
+            model: MODEL_NAME,
             messages: [
                 { role: "system", content: promptSistema },
                 { role: "user", content: promptUsuario }
             ],
-            temperature: estilo === 'manual' ? 0.3 : 0.7 
+            temperature: estilo === 'manual' ? 0.3 : 0.7
         };
-
-        if (!API_KEY) {
-            console.error("❌ ERROR: La variable de entorno GROQ_API_KEY no está configurada.");
-            return res.status(500).json({ error: "No se encontró la configuración de clave de API en el servidor." });
-        }
 
         const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
             method: "POST",
@@ -176,14 +178,14 @@ Devuelve la respuesta EXACTAMENTE en este formato HTML (comienza directamente co
         });
 
         const data = await response.json();
-        
-        if (!data.choices || data.choices.length === 0) {
-            console.error("Respuesta inválida de Groq API:", data);
-            throw new Error("Respuesta incompleta de Groq");
+
+        if (!response.ok) {
+            console.error("❌ Error devuelto por la API en /tirada:", data);
+            return res.status(response.status).json({ error: "Error en el proveedor de IA", detalle: data.error?.message });
         }
 
         let text = data.choices[0].message.content;
-        text = text.replace(/```html/g, "").replace(/```/g, "").replace(/html/g, "");
+        text = text.replace(/^```html\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/g, "").trim();
 
         res.json({ lectura: text });
 
@@ -204,6 +206,10 @@ app.post('/repregunta', async (req, res) => {
     }
 
     try {
+        if (!API_KEY) {
+            return res.status(500).json({ error: "No se encontró la configuración de clave de API en el servidor." });
+        }
+
         const { default: fetch } = await import('node-fetch');
 
         let personalidadMistica = "";
@@ -219,8 +225,8 @@ app.post('/repregunta', async (req, res) => {
 El usuario acaba de leer una interpretación que le diste basándote en cuatro cartas (leídas en dos duplas) y ahora tiene una duda de seguimiento (una re-pregunta).
 
 CONTEXTO HISTÓRICO DE LA SESIÓN:
-- Dupla 1 (Presente/Origen): ${cartas.a} y ${cartas.b}
-- Dupla 2 (Camino al Futuro): ${cartas.c} y ${cartas.d}
+- Dupla 1 (Presente/Origen): ${cartas?.a || ''} y ${cartas?.b || ''}
+- Dupla 2 (Camino al Futuro): ${cartas?.c || ''} y ${cartas?.d || ''}
 - Interpretación previa generada: "${lecturaAnterior}"
 
 REGLAS DE RESPUESTA:
@@ -230,7 +236,7 @@ REGLAS DE RESPUESTA:
 4. Devuelve el texto limpio, usando solo etiquetas HTML <p> o <ul>/<li> básicas para estructurar el contenido.`;
 
         const cuerpoPeticion = {
-            model: "qwen/qwen-2.5-72b-instruct",
+            model: MODEL_NAME,
             messages: [
                 { role: "system", content: promptSistemaRepregunta },
                 { role: "user", content: repregunta }
@@ -238,7 +244,7 @@ REGLAS DE RESPUESTA:
             temperature: 0.7
         };
 
-        const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        const response = await fetch("[https://api.groq.com/openai/v1/chat/completions](https://api.groq.com/openai/v1/chat/completions)", {
             method: "POST",
             headers: {
                 "Authorization": "Bearer " + API_KEY,
@@ -248,13 +254,14 @@ REGLAS DE RESPUESTA:
         });
 
         const data = await response.json();
-        
-        if (!data.choices || data.choices.length === 0) {
-             throw new Error("Respuesta incompleta de Groq en repregunta");
+
+        if (!response.ok) {
+            console.error("❌ Error devuelto por la API en /repregunta:", data);
+            return res.status(response.status).json({ error: "Error en el proveedor de IA", detalle: data.error?.message });
         }
 
         let respuestaIA = data.choices[0].message.content;
-        respuestaIA = respuestaIA.replace(/```html/g, "").replace(/```/g, "").replace(/html/g, "");
+        respuestaIA = respuestaIA.replace(/^```html\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/g, "").trim();
 
         res.json({ respuesta: respuestaIA });
 
@@ -263,10 +270,6 @@ REGLAS DE RESPUESTA:
         res.status(500).json({ error: "La conexión con el plano de las re-preguntas falló." });
     }
 });
-
-// ==========================================
-// 5. ENDPOINTS DE ADMINISTRACIÓN Y BASE DE DATOS
-// ==========================================
 
 // GET: Obtener lista de clientes desde MongoDB Atlas
 app.get('/api/admin/clientes', async (req, res) => {
