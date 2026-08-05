@@ -4,8 +4,8 @@ const mongoose = require('mongoose');
 require('dotenv').config();
 
 const app = express();
-// ✅ AHORA poné esto:
-app.use(cors({
+
+const corsOptions = {
     origin: [
         'https://tarotia-app-psi.github.io',
         'http://localhost:3000',
@@ -14,7 +14,14 @@ app.use(cors({
     methods: ['GET', 'POST', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'x-admin-token'],
     credentials: true
-}));
+};
+
+// Aplicar CORS a todas las rutas
+app.use(cors(corsOptions));
+
+// 🚨 IMPORTANTE: Responder a todas las peticiones Preflight (OPTIONS)
+app.options('*', cors(corsOptions));
+
 app.use(express.json());
 
 // Servir archivos estáticos HTML/JS
