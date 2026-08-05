@@ -195,8 +195,95 @@ Devuelve la respuesta EXACTAMENTE en este formato HTML (comienza directamente co
         // SOLUCIÓN 1: Filtrado Regex para descartar razonamientos internos o introducciones
         text = text.replace(/<think>[\s\S]*?<\/think>/gi, "");
         text = text.replace(/Here's a thinking process:[\s\S]*?(?=<div)/gi, "");
-        text = text.replace(/```html/g, "").replace(/
+        text = text.replace(/```html/g, "").replace(/```/g, "").replace(/html/g, "").trim();
 
+        res.json({ lectura: text });
+
+    } catch (error) {
+        console.error("💥 Error en endpoint /tirada:", error);
+        res.status(500).json({ error: "Error en el servidor místico", detalles: error.message });
+    }
+});
+
+// ==========================================
+// 4. ENDPOINT PARA RE-PREGUNTAS PREMIUM
+// ==========================================
+app.post('/repregunta', async (req, res) => {
+    const { cartas, lecturaAnterior, repregunta, estilo = 'filosofico' } = req.body;
+
+    if (!repregunta) {
+        return res.status(400).json({ error: "Falta la re-pregunta del usuario." });
+    }
+
+    try {
+        const { default: fetch } = await import('node-fetch');
+
+        let personalidadMistica = "";
+        if (estilo === 'manual') {
+            personalidadMistica = "Eres un oráculo analítico y técnico de Tarot. Tu tono en esta respuesta debe ser sumamente claro, estructurado, directo y didáctico para aclarar las dudas sobre las duplas analizadas, sin saludos ceremoniales.";
+        } else if (estilo === 'morgana' || estilo === 'magico') {
+            personalidadMistica = "Eres Morgana, la experta, asertiva y ancestral lectora de Tarot Rider-Waite. Tu tono en esta respuesta debe seguir siendo místico, directo, firme y al hueso, sin rodeos ni saludos.";
+        } else {
+            personalidadMistica = "Eres el terapeuta y experto lector de Tarot Evolutivo y Psicológico. Tu tono debe seguir siendo empático, reflexivo, espiritual y constructivo.";
+        }
+
+        const promptSistemaRepregunta = personalidadMistica + `
+El usuario acaba de leer una interpretación que le diste basándote en cuatro cartas (leídas en dos duplas) y ahora tiene una duda de seguimiento (una re-pregunta).
+
+CONTEXTO HISTÓRICO DE LA SESIÓN:
+- Dupla 1 (Presente/Origen): ${cartas?.a || ''} y ${cartas?.b || ''}
+- Dupla 2 (Camino al Futuro): ${cartas?.c || ''} y ${cartas?.d || ''}
+- Interpretación previa generada: "${lecturaAnterior}"
+
+REGLAS DE RESPUESTA:
+1. Responde a su nueva duda de forma concisa y enfocada, usando máximo 2 párrafos de corrido o viñetas muy puntuales si es Modo Manual.
+2. NO uses asteriscos (*).
+3. Conéctalo de manera fluida con el significado de las cartas que salieron originalmente y lo que ya le habías dicho. Ve directo al grano, sin dar introducciones vacías ni saludos.
+4. Devuelve el texto limpio, usando solo etiquetas HTML <p> o <ul>/<li> básicas para estructurar el contenido.`;
+
+        const cuerpoPeticion = {
+            model: MODEL_NAME,
+            messages: [
+                { role: "system", content: promptSistemaRepregunta },
+                { role: "user", content: repregunta }
+            ],
+            temperature: 0.7
+        };
+
+        const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                "Authorization": "Bearer " + API_KEY,
+                "Content-Type": "authorization" ? "Bearer " + API_KEY : "", // Previene cabecera duplicada si aplicara
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify(cuerpoPeticion)
+        });
+
+        const data = await response.json();
+        
+        if (!response.ok || !data.choices || data.choices.length === 0) {
+            console.error("❌ Error devuelto por Groq en /repregunta:", data);
+            return res.status(response.status || 500).json({ 
+                error: "Respuesta incompleta de Groq en repregunta", 
+                detalle: data.error?.message || "Respuesta inválida" 
+            });
+        }
+
+        let respuestaIA = data.choices[0].message.content || "";
+
+        // SOLUCIÓN 1: Filtrado Regex
+        respuestaIA = respuestaIA.replace(/<think>[\s\S]*?<\/think>/gi, "");
+        respuestaIA = respuestaIA.replace(/Here's a thinking process:[\s\S]*?(?=<p|<ul|<div)/gi, "");
+        respuestaIA = respuestaIA.replace(/```html/g, "").replace(/```/g, "").replace(/html/g, "").trim();
+
+        res.json({ respuesta: respuestaIA });
+
+    } catch (error) {
+        console.error("Error en endpoint /repregunta:", error);
+        res.status(500).json({ error: "La conexión con el plano de las re-preguntas falló." });
+    }
+});
 // ==========================================
 
 // 5. ENDPOINTS DE ADMINISTRACIÓN Y BASE DE DATOS
