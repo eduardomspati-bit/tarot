@@ -103,16 +103,16 @@ Estructura HTML obligatoria:
                 : "Eres un terapeuta y experto lector de Tarot Evolutivo. Tu tono es empático, reflexivo y psicológico.";
 
             promptSistema = `${personalidad}
-Tu objetivo es analizar la combinación de la Dupla 1 (${a} y ${b}) junto a la Dupla 2 (${c} y ${d}) para ofrecer la proyección futura y el consejo final.
+Tu objetivo es analizar la combinación de la Dupla 1 (${a} y ${b}) junto a la Dupla 2 (${c} y ${d}) para ofrecer las predicciones y la conclusión final.
 
-REGLA CRÍTICA: 
-- NO analices el pasado ni el presente en secciones separadas.
-- NO uses listas, viñetas, guiones ni asteriscos (*).
-- Responde DIRECTA Y EXCLUSIVAMENTE en este formato HTML, comenzando en <div class="reading-section">:
+REGLAS CRÍTICAS: 
+1. NO redactes secciones de pasado ni presente.
+2. NO uses listas, viñetas, guiones ni asteriscos (*).
+3. Responde DIRECTA Y EXCLUSIVAMENTE en este formato HTML, comenzando en <div class="reading-section">:
 
 <div class="reading-section">
     <h3>🔮 Predicciones del Oráculo</h3>
-    <p>[Redacta de 2 a 3 predicciones concretas y directas basadas en las 4 cartas (${a}, ${b}, ${c}, ${d}) en un solo párrafo fluido.]</p>
+    <p>[Redacta de 2 a 3 predicciones concretas y directas basadas en las 4 cartas en un solo párrafo fluido.]</p>
 </div>
 
 <div class="reading-section">
@@ -138,7 +138,7 @@ REGLA CRÍTICA:
                     { role: "user", content: promptUsuario }
                 ],
                 temperature: estilo === 'manual' ? 0.2 : 0.6,
-                max_tokens: 1500, // Con este nuevo formato simplificado, 1500 tokens alcanzan de sobra
+                max_tokens: 2000,
                 reasoning_format: "hidden"
             })
         });
@@ -146,27 +146,42 @@ REGLA CRÍTICA:
         const data = await response.json();
 
         if (!response.ok || !data.choices || data.choices.length === 0) {
-            console.error("❌ Error devuelto por la API:", data);
-            return res.status(500).json({ error: "Respuesta incompleta del proveedor de IA." });
+            console.error("❌ Error de Groq API:", data);
+            return res.status(500).json({ error: "Respuesta incompleta de Groq." });
         }
 
-        let text = data.choices[0].message.content || "";
+        let rawText = data.choices[0].message.content || "";
 
-        // Limpieza de etiquetas de pensamiento o intros no deseadas
-        text = text.replace(/<think>[\s\S]*?<\/think>/gi, "");
+        // 🛡️ EXTRACCIÓN Y LIMPIEZA ROBUTA
+        let htmlLimpio = "";
         
-        const primerDiv = text.indexOf("<div");
+        // 1. Eliminar etiquetas de razonamiento
+        rawText = rawText.replace(/<think>[\s\S]*?<\/think>/gi, "");
+        rawText = rawText.replace(/`thinking`[\s\S]*?`/gi, "");
+
+        // 2. Buscar si existe la estructura <div>
+        const primerDiv = rawText.indexOf("<div");
         if (primerDiv !== -1) {
-            text = text.substring(primerDiv);
+            htmlLimpio = rawText.substring(primerDiv);
+        } else {
+            htmlLimpio = rawText;
         }
 
-        text = text.replace(/```html/gi, "").replace(/```/g, "").trim();
+        // 3. Limpiar etiquetas markdown de código
+        htmlLimpio = htmlLimpio.replace(/```html/gi, "").replace(/```/g, "").trim();
 
-        res.json({ lectura: text });
+        // 4. FALLBACK: Si por alguna razón la IA dejó el string vacío, devolvemos un mensaje de contingencia
+        if (!htmlLimpio) {
+            console.warn("⚠️ La respuesta procesada quedó vacía. Usando texto crudo de respaldo.");
+            htmlLimpio = `<div class="reading-section"><h3>🔮 Predicción</h3><p>${rawText || "Las cartas se mantienen en silencio en este momento. Intenta formular tu pregunta nuevamente."}</p></div>`;
+        }
+
+        // Se garantiza responder con la propiedad 'lectura'
+        res.json({ lectura: htmlLimpio });
 
     } catch (error) {
         console.error("💥 Error en /tirada:", error);
-        res.status(500).json({ error: "Error en el servidor", detalles: error.message });
+        res.status(500).json({ error: "Error en el servidor místico", detalles: error.message });
     }
 });
 // ==========================================
