@@ -46,7 +46,8 @@ const UsuarioSchema = new mongoose.Schema({
 
 const Usuario = mongoose.models.Usuario || mongoose.model('Usuario', UsuarioSchema);
 
-const MODEL_NAME = process.env.MODEL_NAME || "qwen-2.5-72b-instruct";
+// CORRECCIÓN: Prefijo "qwen/" necesario para Groq API
+const MODEL_NAME = process.env.MODEL_NAME || "qwen/qwen-2.5-72b-instruct";
 const API_KEY = process.env.GROQ_API_KEY || process.env.API_KEY;
 
 // ==========================================
@@ -290,7 +291,7 @@ app.post('/api/usuarios/registrar', async (req, res) => {
     }
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-    console.log("🚀 SERVIDOR MÍSTICO CORRIENDO EN PUERTO " + PORT);
+    console.log(`🚀 SERVIDOR MÍSTICO CORRIENDO EN PUERTO ${PORT}`);
 });
