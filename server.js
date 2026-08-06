@@ -161,14 +161,14 @@ Devuelve la respuesta EXACTAMENTE en la siguiente estructura HTML escribiendo la
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
-                model: MODEL_NAME,
-                messages: [
-                    { role: "system", content: promptSistema },
-                    { role: "user", content: promptUsuario }
-                ],
-                temperature: estilo === 'manual' ? 0.2 : 0.7,
-                max_tokens: 1200
-            })
+    model: MODEL_NAME,
+    messages: [
+        { role: "system", content: promptSistema },
+        { role: "user", content: promptUsuario }
+    ],
+    temperature: estilo === 'manual' ? 0.2 : 0.7,
+    max_tokens: 1500 // 👈 Cambiado de 1000 a 1500
+})
         });
 
         const data = await response.json();
