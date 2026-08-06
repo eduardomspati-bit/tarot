@@ -78,13 +78,9 @@ app.post('/tirada', async (req, res) => {
         let promptSistema = "";
 
         if (estilo === 'manual') {
-            promptSistema = `Actúa como un diccionario técnico, objetivo y neutral de Tarot.
-Tu tarea exclusiva es analizar las dos duplas de cartas que te presenta el usuario:
-- Dupla 1: ${a} y ${b}
-- Dupla 2: ${c} y ${d}
+            promptSistema = `Actúa como un diccionario técnico de Tarot. Responde ÚNICAMENTE con el código HTML solicitado. Prohibido incluir notas, explicaciones previas o razonamientos.
 
-Devuelve la respuesta estructurada ESTRICTAMENTE en formato HTML de la siguiente manera:
-
+Estructura HTML obligatoria:
 <div class="reading-section">
     <h3>🌿 Dupla 1: ${a} + ${b}</h3>
     <ul>
@@ -93,7 +89,6 @@ Devuelve la respuesta estructurada ESTRICTAMENTE en formato HTML de la siguiente
         <li><strong>Significado 3:</strong> [Significado práctico]</li>
     </ul>
 </div>
-
 <div class="reading-section">
     <h3>🌿 Dupla 2: ${c} + ${d}</h3>
     <ul>
@@ -103,41 +98,32 @@ Devuelve la respuesta estructurada ESTRICTAMENTE en formato HTML de la siguiente
     </ul>
 </div>`;
         } else {
-            let instruccionesPersonalidad = (estilo === 'morgana' || estilo === 'magico')
+            let personalidad = (estilo === 'morgana' || estilo === 'magico')
                 ? "Eres Morgana, una experta y asertiva lectora de Tarot Rider-Waite. Tu tono es directo, místico y predictivo."
                 : "Eres un terapeuta y experto lector de Tarot Evolutivo. Tu tono es empático, reflexivo y psicológico.";
 
-            const reglasFormato = `
-NO uses listas, viñetas, guiones ni asteriscos (*).
+            promptSistema = `${personalidad}
+Tu objetivo es analizar la combinación de la Dupla 1 (${a} y ${b}) junto a la Dupla 2 (${c} y ${d}) para ofrecer la proyección futura y el consejo final.
 
-Devuelve la respuesta EXACTAMENTE en este formato HTML (comienza directamente con el primer div):
+REGLA CRÍTICA: 
+- NO analices el pasado ni el presente en secciones separadas.
+- NO uses listas, viñetas, guiones ni asteriscos (*).
+- Responde DIRECTA Y EXCLUSIVAMENTE en este formato HTML, comenzando en <div class="reading-section">:
 
 <div class="reading-section">
-    <h3>El Presente y Origen (${a} + ${b})</h3>
-    <p>[Interpretación estado actual]</p>
+    <h3>🔮 Predicciones del Oráculo</h3>
+    <p>[Redacta de 2 a 3 predicciones concretas y directas basadas en las 4 cartas (${a}, ${b}, ${c}, ${d}) en un solo párrafo fluido.]</p>
 </div>
 
 <div class="reading-section">
-    <h3>El Camino hacia el Futuro (${c} + ${d})</h3>
-    <p>[Interpretación futuro a corto plazo]</p>
-</div>
-
-<div class="reading-section">
-    <h3>Predicciones del Oráculo</h3>
-    <p>[2 o 3 predicciones concretas en un solo párrafo]</p>
-</div>
-
-<div class="reading-section">
-    <h3>Consejo y Conclusión</h3>
-    <p><span id="conclusion">[Frase de cierre y consejo final]</span></p>
+    <h3>✨ Consejo y Conclusión</h3>
+    <p><span id="conclusion">[Frase clara de cierre y consejo práctico para el consultante.]</span></p>
 </div>`;
-
-            promptSistema = instruccionesPersonalidad + reglasFormato;
         }
 
         const promptUsuario = (tema === 'Pregunta Específica' && pregunta)
-            ? `Pregunta específica: "${pregunta}". Cartas: ${a}, ${b}, ${c} y ${d}.`
-            : `Tema general: ${tema}. Cartas: ${a}, ${b}, ${c} y ${d}.`;
+            ? `Pregunta específica: "${pregunta}". Cartas en mesa: ${a}, ${b}, ${c} y ${d}.`
+            : `Tema general: ${tema}. Cartas en mesa: ${a}, ${b}, ${c} y ${d}.`;
 
         const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
             method: "POST",
@@ -151,120 +137,38 @@ Devuelve la respuesta EXACTAMENTE en este formato HTML (comienza directamente co
                     { role: "system", content: promptSistema },
                     { role: "user", content: promptUsuario }
                 ],
-                temperature: estilo === 'manual' ? 0.3 : 0.7,
-                max_tokens: 2500 // Otorga espacio suficiente para el razonamiento + la respuesta HTML
-            })
-        });
-
-        const data = await response.json();
-
-        if (!response.ok || !data.choices || data.choices.length === 0) {
-            console.error("❌ Error devuelto por Groq API:", data);
-            return res.status(500).json({ error: "Respuesta incompleta del proveedor de IA" });
-        }
-
-        let rawText = data.choices[0].message.content || "";
-
-        // 🛡️ EXTRACCIÓN ROBUSTA DE HTML
-        let htmlFinal = "";
-        const indexDiv = rawText.indexOf("<div");
-
-        if (indexDiv !== -1) {
-            // Si la IA generó etiquetas <div>, extrae desde el primer <div> en adelante
-            htmlFinal = rawText.substring(indexDiv);
-        } else {
-            // Si la IA no colocó <div>, elimina etiquetas de thinking sin romper el resto
-            htmlFinal = rawText
-                .replace(/<think>[\s\S]*?<\/think>/gi, "")
-                .replace(/`thinking`[\s\S]*?`/gi, "")
-                .trim();
-        }
-
-        // Limpiar sintaxis markdown de código si la hubiese
-        htmlFinal = htmlFinal.replace(/```html/gi, "").replace(/```/g, "").trim();
-
-        // 🛡️ FALLBACK DE SEGURIDAD
-        if (!htmlFinal) {
-            console.warn("⚠️ La limpieza dejó el texto vacío. Entregando respuesta cruda procesada.");
-            htmlFinal = `<div class="reading-section"><p>${rawText.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p></div>`;
-        }
-
-        // Se garantiza siempre devolver la propiedad "lectura" con contenido
-        res.json({ lectura: htmlFinal });
-
-    } catch (error) {
-        console.error("💥 Error en endpoint /tirada:", error);
-        res.status(500).json({ error: "Error en el servidor místico", detalles: error.message });
-    }
-});
-// ==========================================
-// 4. ENDPOINT PARA RE-PREGUNTAS
-// ==========================================
-app.post('/repregunta', async (req, res) => {
-    const { cartas, lecturaAnterior, repregunta, estilo = 'filosofico' } = req.body;
-
-    if (!repregunta) {
-        return res.status(400).json({ error: "Falta la re-pregunta del usuario." });
-    }
-
-    try {
-        let personalidadMistica = "";
-        if (estilo === 'manual') {
-            personalidadMistica = "Eres un oráculo analítico y técnico de Tarot. Responde de forma clara, directa y didáctica.";
-        } else if (estilo === 'morgana' || estilo === 'magico') {
-            personalidadMistica = "Eres Morgana, la experta y asertiva lectora de Tarot. Mantén un tono místico, directo y firme.";
-        } else {
-            personalidadMistica = "Eres un terapeuta y experto lector de Tarot Evolutivo. Mantén un tono empático, reflexivo y constructivo.";
-        }
-
-        const promptSistemaRepregunta = `${personalidadMistica}
-El usuario tiene una duda de seguimiento sobre su tirada previo.
-
-CONTEXTO:
-- Dupla 1: ${cartas?.a || ''} y ${cartas?.b || ''}
-- Dupla 2: ${cartas?.c || ''} y ${cartas?.d || ''}
-- Interpretación previa: "${lecturaAnterior}"
-
-REGLAS:
-1. Responde de forma concisa (máximo 2 párrafos).
-2. NO uses asteriscos (*).
-3. Devuelve únicamente HTML básico (<p> o <ul>/<li>).`;
-
-        const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-            method: "POST",
-            headers: {
-                "Authorization": `Bearer ${API_KEY}`,
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-                model: MODEL_NAME,
-                messages: [
-                    { role: "system", content: promptSistemaRepregunta },
-                    { role: "user", content: repregunta }
-                ],
-                temperature: 0.7,
+                temperature: estilo === 'manual' ? 0.2 : 0.6,
+                max_tokens: 1500, // Con este nuevo formato simplificado, 1500 tokens alcanzan de sobra
                 reasoning_format: "hidden"
             })
         });
 
         const data = await response.json();
-        
+
         if (!response.ok || !data.choices || data.choices.length === 0) {
-            return res.status(response.status || 500).json({ 
-                error: "Respuesta incompleta de Groq en repregunta", 
-                detalle: data.error?.message || "Respuesta inválida" 
-            });
+            console.error("❌ Error devuelto por la API:", data);
+            return res.status(500).json({ error: "Respuesta incompleta del proveedor de IA." });
         }
 
-        let respuestaIA = limpiarRazonamiento(data.choices[0].message.content || "");
-        res.json({ respuesta: respuestaIA });
+        let text = data.choices[0].message.content || "";
+
+        // Limpieza de etiquetas de pensamiento o intros no deseadas
+        text = text.replace(/<think>[\s\S]*?<\/think>/gi, "");
+        
+        const primerDiv = text.indexOf("<div");
+        if (primerDiv !== -1) {
+            text = text.substring(primerDiv);
+        }
+
+        text = text.replace(/```html/gi, "").replace(/```/g, "").trim();
+
+        res.json({ lectura: text });
 
     } catch (error) {
-        console.error("Error en endpoint /repregunta:", error);
-        res.status(500).json({ error: "La conexión con la re-pregunta falló." });
+        console.error("💥 Error en /tirada:", error);
+        res.status(500).json({ error: "Error en el servidor", detalles: error.message });
     }
 });
-
 // ==========================================
 // 5. REGISTRO Y ACTUALIZACIÓN ATÓMICA DE USUARIO
 // ==========================================
