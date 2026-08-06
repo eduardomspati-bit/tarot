@@ -47,7 +47,7 @@ const UsuarioSchema = new mongoose.Schema({
 const Usuario = mongoose.models.Usuario || mongoose.model('Usuario', UsuarioSchema);
 
 // CORRECCIÓN: Prefijo "qwen/" necesario para Groq API
-const MODEL_NAME = process.env.MODEL_NAME || "qwen/qwen3-32b";
+const MODEL_NAME = process.env.MODEL_NAME || "llama-3.3-70b-versatile";
 const API_KEY = process.env.GROQ_API_KEY || process.env.API_KEY;
 
 // ==========================================
