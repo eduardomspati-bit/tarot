@@ -20,22 +20,16 @@ app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.static(__dirname));
 
-// ==========================================
-// 1. CONEXIÓN A MONGODB ATLAS
-// ==========================================
 const MONGO_URI = process.env.MONGO_URI;
 
 if (MONGO_URI) {
     mongoose.connect(MONGO_URI)
-        .then(() => console.log('🔮 Conectado exitosamente a MongoDB Atlas'))
-        .catch(err => console.error('❌ Error de conexión a MongoDB:', err.message));
+        .then(() => console.log('Conectado a MongoDB Atlas'))
+        .catch(err => console.error('Error MongoDB:', err.message));
 } else {
-    console.warn('⚠️ MONGO_URI no está configurada en las variables de entorno.');
+    console.warn('MONGO_URI no configurada.');
 }
 
-// ==========================================
-// 2. MODELO DE DATOS
-// ==========================================
 const UsuarioSchema = new mongoose.Schema({
     nombre: { type: String, required: true },
     email: { type: String, required: true, unique: true },
@@ -46,189 +40,61 @@ const UsuarioSchema = new mongoose.Schema({
 
 const Usuario = mongoose.models.Usuario || mongoose.model('Usuario', UsuarioSchema);
 
-// CORRECCIÓN: Prefijo "qwen/" necesario para Groq API
 const MODEL_NAME = process.env.MODEL_NAME || "openai/gpt-oss-120b";
 const API_KEY = process.env.GROQ_API_KEY || process.env.API_KEY;
 
-// ==========================================
-// FUNCIÓN AUXILIAR: LIMPIAR Y GARANTIZAR HTML
-// ==========================================
 function limpiarRazonamiento(texto) {
     if (!texto) return "";
-
-    texto = texto.replace(/<think>[\s\S]*?<\/think>/gi, "");
-    texto = texto.replace(/`thinking`[\s\S]*?`/gi, "");
     texto = texto.replace(/<thinking>[\s\S]*?<\/thinking>/gi, "");
-    texto = texto.replace(/Here['']s a thinking process:[\s\S]*?(?=<div|<p|<ul|<h)/gi, "");
-
-    const primerDiv = texto.indexOf("<div");
-    if (primerDiv !== -1) {
-        texto = texto.substring(primerDiv);
-    }
-
-    texto = texto.replace(/```html/gi, "").replace(/```/g, "").replace(/^html\s*/i, "").trim();
-
-    return texto;
+    texto = texto.replace(/```html/gi, "").replace(/```/g, "");
+    const idx = texto.indexOf("<div");
+    if (idx !== -1) texto = texto.substring(idx);
+    return texto.trim();
 }
 
-// ==========================================
-// 3. ENDPOINT PRINCIPAL DE TIRADAS DE TAROT
-// ==========================================
 app.post('/tirada', async (req, res) => {
-    const { tema, a, b, c, d, estilo = 'filosofico', pregunta } = req.body;
+    let { tema, a, b, c, d, estilo = 'filosofico', pregunta, cartas } = req.body;
+
+    if (!a && cartas && Array.isArray(cartas) && cartas.length >= 4) {
+        a = cartas[0]; b = cartas[1]; c = cartas[2]; d = cartas[3];
+    }
 
     try {
         if (!a || !b || !c || !d) {
-            return res.status(400).json({ error: "Faltan cartas para realizar la tirada." });
+            return res.status(400).json({ error: "Faltan cartas. Envia a,b,c,d o cartas[]." });
         }
 
         let promptSistema = "";
 
         if (estilo === 'manual') {
-            promptSistema = `Actúa como un diccionario técnico, objetivo y neutral de Tarot.
-Tu tarea exclusiva es analizar las dos duplas de cartas que te presenta el usuario:
+            promptSistema = `Actua como un diccionario tecnico de Tarot.
+Analiza las duplas:
 - Dupla 1: ${a} y ${b}
 - Dupla 2: ${c} y ${d}
-
-Proporciona de 3 a 4 interpretaciones o significados prácticos y objetivos de cada combinación.
-Reglas estrictas:
-1. No redactes narrativa poética o mística.
-2. No des consejos directos al consultante.
-3. Mantén un tono neutro, analítico e instructivo.
-4. ESTÁ TERMINANTEMENTE PROHIBIDO relacionar la Dupla 1 con la Dupla 2. Analízalas por separado.
-5. Genera contenido REAL en cada ítem. NO uses marcadores de posición como "[texto]".
-
-Devuelve la respuesta ESTRICTAMENTE en este formato HTML llenando cada lista con interpretaciones reales:
-
-<div class="reading-section">
-    <h3>🌿 Dupla 1: ${a} + ${b}</h3>
-    <ul>
-        <li><strong>Significado 1:</strong> Interpretación real y específica de ${a} y ${b}.</li>
-        <li><strong>Significado 2:</strong> Segunda interpretación práctica de la dupla.</li>
-        <li><strong>Significado 3:</strong> Tercera interpretación práctica de la dupla.</li>
-    </ul>
-</div>
-
-<div class="reading-section">
-    <h3>🌿 Dupla 2: ${c} + ${d}</h3>
-    <ul>
-        <li><strong>Significado 1:</strong> Interpretación real y específica de ${c} y ${d}.</li>
-        <li><strong>Significado 2:</strong> Segunda interpretación práctica de la dupla.</li>
-        <li><strong>Significado 3:</strong> Tercera interpretación práctica de la dupla.</li>
-    </ul>
-</div>`;
+Proporciona 3-4 interpretaciones practicas de cada combinacion.
+Tono neutro, analitico. PROHIBIDO relacionar Dupla 1 con Dupla 2.
+NO uses marcadores de posicion.
+Devuelve HTML con class reading-section.`;
         } else {
             let instruccionesPersonalidad = (estilo === 'morgana' || estilo === 'magico')
-                ? "Eres Morgana, una experta, asertiva y ancestral lectora de Tarot Rider-Waite. Tu tono es místico, seguro, directo y predictivo."
-                : "Eres un terapeuta y experto lector de Tarot Evolutivo. Tu tono es reflexivo, psicológico, empático y constructivo.";
+                ? "Eres Morgana, experta lectora de Tarot. Tono mistico, seguro, directo y predictivo."
+                : "Eres un terapeuta y experto lector de Tarot Evolutivo. Tono reflexivo, psicologico, empatico.";
 
-            const reglasFormato = `
-
-REGLAS CRÍTICAS DE INTERPRETACIÓN:
-1. Redacta una INTERPRETACIÓN REAL Y COMPLETA basada específicamente en las cartas recibidas: ${a}, ${b}, ${c} y ${d}.
-2. ESTÁ ESTRICTAMENTE PROHIBIDO responder con marcadores de posición como "[text]", "[predicción]", "[texto]" o explicaciones abstractas.
-3. NO uses asteriscos (*), guiones ni viñetas.
-4. NO agregues notas finales de verificación ni preguntas de edición.
-
-Devuelve la respuesta EXACTAMENTE en la siguiente estructura HTML escribiendo la lectura real en los párrafos:
-
-<div class="reading-section">
-    <h3>🔮 Predicciones del Oráculo</h3>
-    <p>Escribe aquí la interpretación detallada y la revelación completa conectando las cartas ${a}, ${b}, ${c} y ${d} enfocándote en las proyecciones futuras.</p>
-</div>
-
-<div class="reading-section">
-    <h3>✨ Consejo y Conclusión</h3>
-    <p><span id="conclusion">Escribe aquí el consejo directo y la reflexión final práctica para el consultante basada en el conjunto de la tirada.</span></p>
-</div>`;
-
-            promptSistema = instruccionesPersonalidad + reglasFormato;
+            promptSistema = instruccionesPersonalidad + `
+REGLAS CRITICAS:
+1. Interpretacion REAL basada en ${a}, ${b}, ${c}, ${d}.
+2. PROHIBIDO marcadores de posicion como [texto].
+3. NO uses asteriscos, guiones ni vinetas.
+4. Devuelve HTML con class reading-section.`;
         }
 
-        const promptUsuario = (tema === 'Pregunta Específica' && pregunta)
-            ? `Pregunta específica del consultante: "${pregunta}". Cartas seleccionadas para la tirada: ${a}, ${b}, ${c} y ${d}. Realiza la lectura completa.`
-            : `Tema de la consulta: ${tema}. Cartas seleccionadas para la tirada: ${a}, ${b}, ${c} y ${d}. Realiza la lectura completa.`;
+        const promptUsuario = (tema === 'Pregunta Especifica' && pregunta)
+            ? `Pregunta: "${pregunta}". Cartas: ${a}, ${b}, ${c}, ${d}. Realiza la lectura.`
+            : `Tema: ${tema}. Cartas: ${a}, ${b}, ${c}, ${d}. Realiza la lectura.`;
 
         if (!API_KEY) {
-            console.error("❌ ERROR: Variable de entorno de API Key no configurada.");
-            return res.status(500).json({ error: "No se encontró la configuración de clave de API en el servidor." });
+            return res.status(500).json({ error: "API Key no configurada." });
         }
-
-        const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-            method: "POST",
-            headers: {
-                "Authorization": `Bearer ${API_KEY}`,
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-    model: MODEL_NAME,
-    messages: [
-        { role: "system", content: promptSistema },
-        { role: "user", content: promptUsuario }
-    ],
-    temperature: estilo === 'manual' ? 0.2 : 0.7,
-    max_tokens: 1500 // 👈 Cambiado de 1000 a 1500
-})
-        });
-
-        const data = await response.json();
-
-        if (!response.ok || !data.choices || data.choices.length === 0) {
-            console.error("❌ Error devuelto por Groq API:", data);
-            return res.status(response.status || 500).json({
-                error: "Respuesta incompleta de Groq",
-                detalle: data.error?.message || "Respuesta inválida"
-            });
-        }
-
-        let text = limpiarRazonamiento(data.choices[0].message.content || "");
-
-        // Limpieza de frases residuales
-        text = text.replace(/Check for any markdown formatting.*/gi, '').trim();
-
-        if (!text) {
-            text = `<div class="reading-section"><h3>🔮 Predicciones del Oráculo</h3><p>Las cartas ${a}, ${b}, ${c} y ${d} revelan un período de movimiento y evolución profunda en tu camino.</p></div><div class="reading-section"><h3>✨ Consejo y Conclusión</h3><p><span id="conclusion">Confía en tu discernimiento y mantén la firmeza en tus decisiones.</span></p></div>`;
-        }
-
-        res.json({ lectura: text });
-
-    } catch (error) {
-        console.error("💥 Error en endpoint /tirada:", error);
-        res.status(500).json({ error: "Error en el servidor místico", detalles: error.message });
-    }
-});
-// ==========================================
-// 4. ENDPOINT PARA RE-PREGUNTAS
-// ==========================================
-app.post('/repregunta', async (req, res) => {
-    const { cartas, lecturaAnterior, repregunta, estilo = 'filosofico' } = req.body;
-
-    if (!repregunta) {
-        return res.status(400).json({ error: "Falta la re-pregunta del usuario." });
-    }
-
-    try {
-        let personalidadMistica = "";
-        if (estilo === 'manual') {
-            personalidadMistica = "Eres un oráculo analítico y técnico de Tarot. Responde de forma clara, directa y didáctica.";
-        } else if (estilo === 'morgana' || estilo === 'magico') {
-            personalidadMistica = "Eres Morgana, la experta y asertiva lectora de Tarot. Mantén un tono místico, directo y firme.";
-        } else {
-            personalidadMistica = "Eres un terapeuta y experto lector de Tarot Evolutivo. Mantén un tono empático, reflexivo y constructivo.";
-        }
-
-        const promptSistemaRepregunta = `${personalidadMistica}
-El usuario tiene una duda de seguimiento sobre su tirada previa.
-
-CONTEXTO:
-- Dupla 1: ${cartas?.a || ''} y ${cartas?.b || ''}
-- Dupla 2: ${cartas?.c || ''} y ${cartas?.d || ''}
-- Interpretación previa: "${lecturaAnterior}"
-
-REGLAS:
-1. Responde de forma concisa (máximo 2 párrafos).
-2. NO uses asteriscos (*).
-3. Devuelve únicamente HTML básico (<p> o <ul>/<li>).`;
 
         const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
             method: "POST",
@@ -239,7 +105,65 @@ REGLAS:
             body: JSON.stringify({
                 model: MODEL_NAME,
                 messages: [
-                    { role: "system", content: promptSistemaRepregunta },
+                    { role: "system", content: promptSistema },
+                    { role: "user", content: promptUsuario }
+                ],
+                temperature: estilo === 'manual' ? 0.2 : 0.7,
+                max_tokens: 1500
+            })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok || !data.choices || data.choices.length === 0) {
+            return res.status(response.status || 500).json({
+                error: "Respuesta incompleta de Groq",
+                detalle: data.error?.message || "Respuesta invalida"
+            });
+        }
+
+        let text = limpiarRazonamiento(data.choices[0].message.content || "");
+
+        if (!text) {
+            text = `<div class="reading-section"><h3>Predicciones del Oraculo</h3><p>Las cartas ${a}, ${b}, ${c} y ${d} revelan un periodo de movimiento profundo.</p></div><div class="reading-section"><h3>Consejo y Conclusion</h3><p>Confia en tu discernimiento.</p></div>`;
+        }
+
+        res.json({ lectura: text });
+
+    } catch (error) {
+        console.error("Error en /tirada:", error);
+        res.status(500).json({ error: "Error en el servidor", detalles: error.message });
+    }
+});
+
+app.post('/repregunta', async (req, res) => {
+    const { cartas, lecturaAnterior, repregunta, estilo = 'filosofico' } = req.body;
+    if (!repregunta) return res.status(400).json({ error: "Falta la repregunta." });
+
+    try {
+        let personalidad = "";
+        if (estilo === 'manual') personalidad = "Oraculo analitico de Tarot. Tono claro y didactico.";
+        else if (estilo === 'morgana' || estilo === 'magico') personalidad = "Morgana, lectora mistica. Tono directo y firme.";
+        else personalidad = "Terapeuta de Tarot Evolutivo. Tono empatico y reflexivo.";
+
+        const promptSistema = `${personalidad}
+El usuario tiene una duda de seguimiento.
+CONTEXTO:
+- Dupla 1: ${cartas?.a || ''} y ${cartas?.b || ''}
+- Dupla 2: ${cartas?.c || ''} y ${cartas?.d || ''}
+- Lectura previa: "${lecturaAnterior}"
+REGLAS: Maximo 2 parrafos. NO asteriscos. Solo HTML basico.`;
+
+        const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${API_KEY}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                model: MODEL_NAME,
+                messages: [
+                    { role: "system", content: promptSistema },
                     { role: "user", content: repregunta }
                 ],
                 temperature: 0.6,
@@ -251,28 +175,22 @@ REGLAS:
 
         if (!response.ok || !data.choices || data.choices.length === 0) {
             return res.status(response.status || 500).json({
-                error: "Respuesta incompleta de Groq en repregunta",
-                detalle: data.error?.message || "Respuesta inválida"
+                error: "Respuesta incompleta de Groq",
+                detalle: data.error?.message || "Invalida"
             });
         }
 
         let respuestaIA = limpiarRazonamiento(data.choices[0].message.content || "");
-
-        if (!respuestaIA) {
-            respuestaIA = "<p>Las cartas sugieren reflexionar con calma sobre esta inquietud antes de tomar una determinación.</p>";
-        }
+        if (!respuestaIA) respuestaIA = "<p>Las cartas sugieren reflexionar con calma.</p>";
 
         res.json({ respuesta: respuestaIA });
 
     } catch (error) {
-        console.error("Error en endpoint /repregunta:", error);
-        res.status(500).json({ error: "La conexión con la re-pregunta falló." });
+        console.error("Error en /repregunta:", error);
+        res.status(500).json({ error: "La conexion con la repregunta fallo." });
     }
 });
 
-// ==========================================
-// 5. REGISTRO Y ACTUALIZACIÓN ATÓMICA DE USUARIO
-// ==========================================
 app.post('/api/usuarios/registrar', async (req, res) => {
     const { nombre, email } = req.body;
     if (!email) return res.status(400).json({ error: "El email es requerido." });
@@ -284,19 +202,18 @@ app.post('/api/usuarios/registrar', async (req, res) => {
             {
                 $inc: { totalTiradas: 1 },
                 $set: { ultimaConexion: hoy },
-                $setOnInsert: { nombre: nombre || 'Consultante Místico', plan: 'Gratis' }
+                $setOnInsert: { nombre: nombre || 'Consultante', plan: 'Gratis' }
             },
             { new: true, upsert: true }
         );
-
-        return res.json({ mensaje: 'Usuario registrado/actualizado', usuario });
+        return res.json({ mensaje: "Usuario registrado", usuario });
     } catch (error) {
-        console.error("❌ Error al registrar usuario:", error.message);
+        console.error("Error al registrar:", error.message);
         return res.status(500).json({ error: error.message });
     }
 });
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-    console.log(`🚀 SERVIDOR MÍSTICO CORRIENDO EN PUERTO ${PORT}`);
+    console.log(`Servidor corriendo en puerto ${PORT}`);
 });
