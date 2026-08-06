@@ -90,64 +90,64 @@ Tu tarea exclusiva es analizar las dos duplas de cartas que te presenta el usuar
 - Dupla 1: ${a} y ${b}
 - Dupla 2: ${c} y ${d}
 
-Para cada dupla, debes proporcionar de 3 a 4 posibles interpretaciones o significados prácticos y objetivos de su combinación.
-Reglas estrictas que debes cumplir:
-1. No redactes párrafos largos de narrativa poética o mística.
+Proporciona de 3 a 4 interpretaciones o significados prácticos y objetivos de cada combinación.
+Reglas estrictas:
+1. No redactes narrativa poética o mística.
 2. No des consejos directos al consultante.
 3. Mantén un tono neutro, analítico e instructivo.
-4. ESTÁ TERMINANTEMENTE PROHIBIDO relacionar la Dupla 1 with la Dupla 2. Analízalas por separado.
-5. NO incluyas textos extras, ni preguntas, ni comentarios fuera de las etiquetas HTML.
+4. ESTÁ TERMINANTEMENTE PROHIBIDO relacionar la Dupla 1 con la Dupla 2. Analízalas por separado.
+5. Genera contenido REAL en cada ítem. NO uses marcadores de posición como "[texto]".
 
-Devuelve la respuesta estructurada ESTRICTAMENTE en formato HTML de la siguiente manera:
+Devuelve la respuesta ESTRICTAMENTE en este formato HTML llenando cada lista con interpretaciones reales:
 
 <div class="reading-section">
     <h3>🌿 Dupla 1: ${a} + ${b}</h3>
     <ul>
-        <li><strong>Significado 1:</strong> [Significado práctico y objetivo breve]</li>
-        <li><strong>Significado 2:</strong> [Significado práctico y objetivo breve]</li>
-        <li><strong>Significado 3:</strong> [Significado práctico y objetivo breve]</li>
+        <li><strong>Significado 1:</strong> Interpretación real y específica de ${a} y ${b}.</li>
+        <li><strong>Significado 2:</strong> Segunda interpretación práctica de la dupla.</li>
+        <li><strong>Significado 3:</strong> Tercera interpretación práctica de la dupla.</li>
     </ul>
 </div>
 
 <div class="reading-section">
     <h3>🌿 Dupla 2: ${c} + ${d}</h3>
     <ul>
-        <li><strong>Significado 1:</strong> [Significado práctico y objective breve]</li>
-        <li><strong>Significado 2:</strong> [Significado práctico y objetivo breve]</li>
-        <li><strong>Significado 3:</strong> [Significado práctico y objetivo breve]</li>
+        <li><strong>Significado 1:</strong> Interpretación real y específica de ${c} y ${d}.</li>
+        <li><strong>Significado 2:</strong> Segunda interpretación práctica de la dupla.</li>
+        <li><strong>Significado 3:</strong> Tercera interpretación práctica de la dupla.</li>
     </ul>
 </div>`;
         } else {
             let instruccionesPersonalidad = (estilo === 'morgana' || estilo === 'magico')
-                ? "Eres Morgana, una experta, asertiva y ancestral lectora de Tarot Rider-Waite. Tu tono debe ser místico, seguro, directo y predictivo."
-                : "Eres un terapeuta y experto lector de Tarot Evolutivo. Tu tono debe ser reflexivo, psicológico, empático y constructivo.";
+                ? "Eres Morgana, una experta, asertiva y ancestral lectora de Tarot Rider-Waite. Tu tono es místico, seguro, directo y predictivo."
+                : "Eres un terapeuta y experto lector de Tarot Evolutivo. Tu tono es reflexivo, psicológico, empático y constructivo.";
 
             const reglasFormato = `
-REGLAS CRÍTICAS DE FORMATO:
-1. NO redactes secciones de pasado ni de presente. Centrate directamente en la proyección y el consejo.
-2. NO uses listas, viñetas, guiones ni asteriscos (*).
-3. Analiza las cartas (${a}, ${b}, ${c}, ${d}) de forma fluida.
-4. ESTÁ TERMINANTEMENTE PROHIBIDO agregar preguntas finales, notas de verificación ("Check for..."), pensamiento interno o reflexiones sobre el formato.
-5. Devuelve ÚNICAMENTE el código HTML pedido, nada más antes ni después.
 
-Devuelve la respuesta EXACTAMENTE en este formato HTML:
+REGLAS CRÍTICAS DE INTERPRETACIÓN:
+1. Redacta una INTERPRETACIÓN REAL Y COMPLETA basada específicamente en las cartas recibidas: ${a}, ${b}, ${c} y ${d}.
+2. ESTÁ ESTRICTAMENTE PROHIBIDO responder con marcadores de posición como "[text]", "[predicción]", "[texto]" o explicaciones abstractas.
+3. NO uses asteriscos (*), guiones ni viñetas.
+4. NO agregues notas finales de verificación ni preguntas de edición.
+
+Devuelve la respuesta EXACTAMENTE en la siguiente estructura HTML escribiendo la lectura real en los párrafos:
 
 <div class="reading-section">
     <h3>🔮 Predicciones del Oráculo</h3>
-    <p>[Redacta de 2 a 3 predicciones o revelaciones concretas basadas en las cartas en un solo párrafo fluido.]</p>
+    <p>Escribe aquí la interpretación detallada y la revelación completa conectando las cartas ${a}, ${b}, ${c} y ${d} enfocándote en las proyecciones futuras.</p>
 </div>
 
 <div class="reading-section">
     <h3>✨ Consejo y Conclusión</h3>
-    <p><span id="conclusion">[Frase clara de cierre y consejo práctico para el consultante.]</span></p>
+    <p><span id="conclusion">Escribe aquí el consejo directo y la reflexión final práctica para el consultante basada en el conjunto de la tirada.</span></p>
 </div>`;
 
             promptSistema = instruccionesPersonalidad + reglasFormato;
         }
 
         const promptUsuario = (tema === 'Pregunta Específica' && pregunta)
-            ? `Pregunta específica del consultante: "${pregunta}". Cartas seleccionadas: ${a}, ${b}, ${c} y ${d}.`
-            : `Tema general: ${tema}. Cartas seleccionadas: ${a}, ${b}, ${c} y ${d}.`;
+            ? `Pregunta específica del consultante: "${pregunta}". Cartas seleccionadas para la tirada: ${a}, ${b}, ${c} y ${d}. Realiza la lectura completa.`
+            : `Tema de la consulta: ${tema}. Cartas seleccionadas para la tirada: ${a}, ${b}, ${c} y ${d}. Realiza la lectura completa.`;
 
         if (!API_KEY) {
             console.error("❌ ERROR: Variable de entorno de API Key no configurada.");
@@ -166,8 +166,8 @@ Devuelve la respuesta EXACTAMENTE en este formato HTML:
                     { role: "system", content: promptSistema },
                     { role: "user", content: promptUsuario }
                 ],
-                temperature: estilo === 'manual' ? 0.2 : 0.6,
-                max_tokens: 1000
+                temperature: estilo === 'manual' ? 0.2 : 0.7,
+                max_tokens: 1200
             })
         });
 
@@ -183,11 +183,11 @@ Devuelve la respuesta EXACTAMENTE en este formato HTML:
 
         let text = limpiarRazonamiento(data.choices[0].message.content || "");
 
-        // Limpieza extra para eliminar cualquier frase de verificación al final
+        // Limpieza de frases residuales
         text = text.replace(/Check for any markdown formatting.*/gi, '').trim();
 
         if (!text) {
-            text = `<div class="reading-section"><h3>🔮 Predicciones del Oráculo</h3><p>Las cartas revelan un período de transformación y decisiones importantes basándose en las energías de ${a}, ${b}, ${c} y ${d}.</p></div><div class="reading-section"><h3>✨ Consejo y Conclusión</h3><p><span id="conclusion">Mantén el enfoque en tus metas inmediatas y confía en tu intuición.</span></p></div>`;
+            text = `<div class="reading-section"><h3>🔮 Predicciones del Oráculo</h3><p>Las cartas ${a}, ${b}, ${c} y ${d} revelan un período de movimiento y evolución profunda en tu camino.</p></div><div class="reading-section"><h3>✨ Consejo y Conclusión</h3><p><span id="conclusion">Confía en tu discernimiento y mantén la firmeza en tus decisiones.</span></p></div>`;
         }
 
         res.json({ lectura: text });
