@@ -95,7 +95,8 @@ Reglas estrictas que debes cumplir:
 1. No redactes párrafos largos de narrativa poética o mística.
 2. No des consejos directos al consultante.
 3. Mantén un tono neutro, analítico e instructivo.
-4. ESTÁ TERMINANTEMENTE PROHIBIDO relacionar la Dupla 1 con la Dupla 2. Analízalas por separado.
+4. ESTÁ TERMINANTEMENTE PROHIBIDO relacionar la Dupla 1 with la Dupla 2. Analízalas por separado.
+5. NO incluyas textos extras, ni preguntas, ni comentarios fuera de las etiquetas HTML.
 
 Devuelve la respuesta estructurada ESTRICTAMENTE en formato HTML de la siguiente manera:
 
@@ -111,7 +112,7 @@ Devuelve la respuesta estructurada ESTRICTAMENTE en formato HTML de la siguiente
 <div class="reading-section">
     <h3>🌿 Dupla 2: ${c} + ${d}</h3>
     <ul>
-        <li><strong>Significado 1:</strong> [Significado práctico y objetivo breve]</li>
+        <li><strong>Significado 1:</strong> [Significado práctico y objective breve]</li>
         <li><strong>Significado 2:</strong> [Significado práctico y objetivo breve]</li>
         <li><strong>Significado 3:</strong> [Significado práctico y objetivo breve]</li>
     </ul>
@@ -126,6 +127,8 @@ REGLAS CRÍTICAS DE FORMATO:
 1. NO redactes secciones de pasado ni de presente. Centrate directamente en la proyección y el consejo.
 2. NO uses listas, viñetas, guiones ni asteriscos (*).
 3. Analiza las cartas (${a}, ${b}, ${c}, ${d}) de forma fluida.
+4. ESTÁ TERMINANTEMENTE PROHIBIDO agregar preguntas finales, notas de verificación ("Check for..."), pensamiento interno o reflexiones sobre el formato.
+5. Devuelve ÚNICAMENTE el código HTML pedido, nada más antes ni después.
 
 Devuelve la respuesta EXACTAMENTE en este formato HTML:
 
@@ -180,6 +183,9 @@ Devuelve la respuesta EXACTAMENTE en este formato HTML:
 
         let text = limpiarRazonamiento(data.choices[0].message.content || "");
 
+        // Limpieza extra para eliminar cualquier frase de verificación al final
+        text = text.replace(/Check for any markdown formatting.*/gi, '').trim();
+
         if (!text) {
             text = `<div class="reading-section"><h3>🔮 Predicciones del Oráculo</h3><p>Las cartas revelan un período de transformación y decisiones importantes basándose en las energías de ${a}, ${b}, ${c} y ${d}.</p></div><div class="reading-section"><h3>✨ Consejo y Conclusión</h3><p><span id="conclusion">Mantén el enfoque en tus metas inmediatas y confía en tu intuición.</span></p></div>`;
         }
@@ -191,7 +197,6 @@ Devuelve la respuesta EXACTAMENTE en este formato HTML:
         res.status(500).json({ error: "Error en el servidor místico", detalles: error.message });
     }
 });
-
 // ==========================================
 // 4. ENDPOINT PARA RE-PREGUNTAS
 // ==========================================
