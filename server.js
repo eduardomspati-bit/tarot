@@ -20,6 +20,9 @@ app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.static(__dirname));
 
+// ==========================================
+// 1. CONEXIÓN A MONGODB ATLAS
+// ==========================================
 const MONGO_URI = process.env.MONGO_URI;
 
 if (MONGO_URI) {
@@ -30,6 +33,9 @@ if (MONGO_URI) {
     console.warn('MONGO_URI no configurada.');
 }
 
+// ==========================================
+// 2. MODELO DE DATOS
+// ==========================================
 const UsuarioSchema = new mongoose.Schema({
     nombre: { type: String, required: true },
     email: { type: String, required: true, unique: true },
@@ -40,18 +46,36 @@ const UsuarioSchema = new mongoose.Schema({
 
 const Usuario = mongoose.models.Usuario || mongoose.model('Usuario', UsuarioSchema);
 
-const MODEL_NAME = process.env.MODEL_NAME || "openai/gpt-oss-120b";
+const MODEL_NAME = process.env.MODEL_NAME || 'openai/gpt-oss-120b';
 const API_KEY = process.env.GROQ_API_KEY || process.env.API_KEY;
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'MarinaRabino1995';
 
+// ==========================================
+// MIDDLEWARE DE ADMIN
+// ==========================================
+function verificarAdmin(req, res, next) {
+    const token = req.headers['x-admin-token'];
+    if (token !== ADMIN_TOKEN) {
+        return res.status(403).json({ error: 'Acceso denegado. Token invalido.' });
+    }
+    next();
+}
+
+// ==========================================
+// FUNCIÓN AUXILIAR: LIMPIAR HTML
+// ==========================================
 function limpiarRazonamiento(texto) {
-    if (!texto) return "";
-    texto = texto.replace(/<thinking>[\s\S]*?<\/thinking>/gi, "");
-    texto = texto.replace(/```html/gi, "").replace(/```/g, "");
-    const idx = texto.indexOf("<div");
+    if (!texto) return '';
+    texto = texto.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '');
+    texto = texto.replace(/```html/gi, '').replace(/```/g, '');
+    const idx = texto.indexOf('<div');
     if (idx !== -1) texto = texto.substring(idx);
     return texto.trim();
 }
 
+// ==========================================
+// ENDPOINT: TIRADA
+// ==========================================
 app.post('/tirada', async (req, res) => {
     let { tema, a, b, c, d, estilo = 'filosofico', pregunta, cartas } = req.body;
 
@@ -61,10 +85,10 @@ app.post('/tirada', async (req, res) => {
 
     try {
         if (!a || !b || !c || !d) {
-            return res.status(400).json({ error: "Faltan cartas. Envia a,b,c,d o cartas[]." });
+            return res.status(400).json({ error: 'Faltan cartas. Envia a,b,c,d o cartas[].' });
         }
 
-        let promptSistema = "";
+        let promptSistema = '';
 
         if (estilo === 'manual') {
             promptSistema = `Actua como un diccionario tecnico de Tarot.
@@ -77,8 +101,8 @@ NO uses marcadores de posicion.
 Devuelve HTML con class reading-section.`;
         } else {
             let instruccionesPersonalidad = (estilo === 'morgana' || estilo === 'magico')
-                ? "Eres Morgana, experta lectora de Tarot. Tono mistico, seguro, directo y predictivo."
-                : "Eres un terapeuta y experto lector de Tarot Evolutivo. Tono reflexivo, psicologico, empatico.";
+                ? 'Eres Morgana, experta lectora de Tarot. Tono mistico, seguro, directo y predictivo.'
+                : 'Eres un terapeuta y experto lector de Tarot Evolutivo. Tono reflexivo, psicologico, empatico.';
 
             promptSistema = instruccionesPersonalidad + `
 REGLAS CRITICAS:
@@ -93,20 +117,20 @@ REGLAS CRITICAS:
             : `Tema: ${tema}. Cartas: ${a}, ${b}, ${c}, ${d}. Realiza la lectura.`;
 
         if (!API_KEY) {
-            return res.status(500).json({ error: "API Key no configurada." });
+            return res.status(500).json({ error: 'API Key no configurada.' });
         }
 
-        const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-            method: "POST",
+        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
             headers: {
-                "Authorization": `Bearer ${API_KEY}`,
-                "Content-Type": "application/json"
+                'Authorization': `Bearer ${API_KEY}`,
+                'Content-Type': 'application/json'
             },
             body: JSON.stringify({
                 model: MODEL_NAME,
                 messages: [
-                    { role: "system", content: promptSistema },
-                    { role: "user", content: promptUsuario }
+                    { role: 'system', content: promptSistema },
+                    { role: 'user', content: promptUsuario }
                 ],
                 temperature: estilo === 'manual' ? 0.2 : 0.7,
                 max_tokens: 1500
@@ -117,12 +141,12 @@ REGLAS CRITICAS:
 
         if (!response.ok || !data.choices || data.choices.length === 0) {
             return res.status(response.status || 500).json({
-                error: "Respuesta incompleta de Groq",
-                detalle: data.error?.message || "Respuesta invalida"
+                error: 'Respuesta incompleta de Groq',
+                detalle: data.error?.message || 'Respuesta invalida'
             });
         }
 
-        let text = limpiarRazonamiento(data.choices[0].message.content || "");
+        let text = limpiarRazonamiento(data.choices[0].message.content || '');
 
         if (!text) {
             text = `<div class="reading-section"><h3>Predicciones del Oraculo</h3><p>Las cartas ${a}, ${b}, ${c} y ${d} revelan un periodo de movimiento profundo.</p></div><div class="reading-section"><h3>Consejo y Conclusion</h3><p>Confia en tu discernimiento.</p></div>`;
@@ -131,20 +155,23 @@ REGLAS CRITICAS:
         res.json({ lectura: text });
 
     } catch (error) {
-        console.error("Error en /tirada:", error);
-        res.status(500).json({ error: "Error en el servidor", detalles: error.message });
+        console.error('Error en /tirada:', error);
+        res.status(500).json({ error: 'Error en el servidor', detalles: error.message });
     }
 });
 
+// ==========================================
+// ENDPOINT: REPREGUNTA
+// ==========================================
 app.post('/repregunta', async (req, res) => {
     const { cartas, lecturaAnterior, repregunta, estilo = 'filosofico' } = req.body;
-    if (!repregunta) return res.status(400).json({ error: "Falta la repregunta." });
+    if (!repregunta) return res.status(400).json({ error: 'Falta la repregunta.' });
 
     try {
-        let personalidad = "";
-        if (estilo === 'manual') personalidad = "Oraculo analitico de Tarot. Tono claro y didactico.";
-        else if (estilo === 'morgana' || estilo === 'magico') personalidad = "Morgana, lectora mistica. Tono directo y firme.";
-        else personalidad = "Terapeuta de Tarot Evolutivo. Tono empatico y reflexivo.";
+        let personalidad = '';
+        if (estilo === 'manual') personalidad = 'Oraculo analitico de Tarot. Tono claro y didactico.';
+        else if (estilo === 'morgana' || estilo === 'magico') personalidad = 'Morgana, lectora mistica. Tono directo y firme.';
+        else personalidad = 'Terapeuta de Tarot Evolutivo. Tono empatico y reflexivo.';
 
         const promptSistema = `${personalidad}
 El usuario tiene una duda de seguimiento.
@@ -154,17 +181,17 @@ CONTEXTO:
 - Lectura previa: "${lecturaAnterior}"
 REGLAS: Maximo 2 parrafos. NO asteriscos. Solo HTML basico.`;
 
-        const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-            method: "POST",
+        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
             headers: {
-                "Authorization": `Bearer ${API_KEY}`,
-                "Content-Type": "application/json"
+                'Authorization': `Bearer ${API_KEY}`,
+                'Content-Type': 'application/json'
             },
             body: JSON.stringify({
                 model: MODEL_NAME,
                 messages: [
-                    { role: "system", content: promptSistema },
-                    { role: "user", content: repregunta }
+                    { role: 'system', content: promptSistema },
+                    { role: 'user', content: repregunta }
                 ],
                 temperature: 0.6,
                 max_tokens: 600
@@ -175,25 +202,28 @@ REGLAS: Maximo 2 parrafos. NO asteriscos. Solo HTML basico.`;
 
         if (!response.ok || !data.choices || data.choices.length === 0) {
             return res.status(response.status || 500).json({
-                error: "Respuesta incompleta de Groq",
-                detalle: data.error?.message || "Invalida"
+                error: 'Respuesta incompleta de Groq',
+                detalle: data.error?.message || 'Invalida'
             });
         }
 
-        let respuestaIA = limpiarRazonamiento(data.choices[0].message.content || "");
-        if (!respuestaIA) respuestaIA = "<p>Las cartas sugieren reflexionar con calma.</p>";
+        let respuestaIA = limpiarRazonamiento(data.choices[0].message.content || '');
+        if (!respuestaIA) respuestaIA = '<p>Las cartas sugieren reflexionar con calma.</p>';
 
         res.json({ respuesta: respuestaIA });
 
     } catch (error) {
-        console.error("Error en /repregunta:", error);
-        res.status(500).json({ error: "La conexion con la repregunta fallo." });
+        console.error('Error en /repregunta:', error);
+        res.status(500).json({ error: 'La conexion con la repregunta fallo.' });
     }
 });
 
+// ==========================================
+// ENDPOINT: REGISTRAR USUARIO
+// ==========================================
 app.post('/api/usuarios/registrar', async (req, res) => {
     const { nombre, email } = req.body;
-    if (!email) return res.status(400).json({ error: "El email es requerido." });
+    if (!email) return res.status(400).json({ error: 'El email es requerido.' });
 
     try {
         const hoy = new Date().toISOString().split('T')[0];
@@ -206,13 +236,57 @@ app.post('/api/usuarios/registrar', async (req, res) => {
             },
             { new: true, upsert: true }
         );
-        return res.json({ mensaje: "Usuario registrado", usuario });
+        return res.json({ mensaje: 'Usuario registrado', usuario });
     } catch (error) {
-        console.error("Error al registrar:", error.message);
+        console.error('Error al registrar:', error.message);
         return res.status(500).json({ error: error.message });
     }
 });
 
+// ==========================================
+// ENDPOINTS DE ADMIN
+// ==========================================
+
+// Listar todos los clientes
+app.get('/api/admin/clientes', verificarAdmin, async (req, res) => {
+    try {
+        const clientes = await Usuario.find({}, { __v: 0 }).sort({ createdAt: -1 });
+        res.json({ clientes });
+    } catch (error) {
+        console.error('Error en /api/admin/clientes:', error);
+        res.status(500).json({ error: 'Error al obtener clientes' });
+    }
+});
+
+// Cambiar plan de un usuario
+app.post('/api/admin/cambiar-plan', verificarAdmin, async (req, res) => {
+    const { userId, nuevoPlan } = req.body;
+    if (!userId || !nuevoPlan) {
+        return res.status(400).json({ error: 'Faltan userId o nuevoPlan' });
+    }
+    if (!['Gratis', 'Premium'].includes(nuevoPlan)) {
+        return res.status(400).json({ error: 'Plan invalido. Use Gratis o Premium' });
+    }
+
+    try {
+        const usuario = await Usuario.findOneAndUpdate(
+            { $or: [{ email: userId }, { _id: userId }] },
+            { $set: { plan: nuevoPlan } },
+            { new: true }
+        );
+        if (!usuario) {
+            return res.status(404).json({ error: 'Usuario no encontrado' });
+        }
+        res.json({ mensaje: `Plan actualizado a ${nuevoPlan}`, usuario });
+    } catch (error) {
+        console.error('Error en /api/admin/cambiar-plan:', error);
+        res.status(500).json({ error: 'Error al cambiar plan' });
+    }
+});
+
+// ==========================================
+// SERVIDOR
+// ==========================================
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
     console.log(`Servidor corriendo en puerto ${PORT}`);
