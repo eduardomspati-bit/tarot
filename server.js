@@ -235,6 +235,9 @@ app.post('/repregunta', async (req, res) => {
 
 El usuario hace una NUEVA pregunta de seguimiento sobre la misma tirada.
 
+LECTURA PREVIA RECIBIDA:
+"${lecturaAnterior || 'No disponible'}"
+
 CARTAS ORIGINALES (interpretadas por DUPLAS, no individuales):
 - Dupla 1 (PRESENTE): ${a} y ${b} → Significado conjunto de estas dos cartas juntas.
 - Dupla 2 (FUTURO): ${c} y ${d} → Significado conjunto de estas dos cartas juntas.
