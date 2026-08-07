@@ -100,49 +100,71 @@ app.post('/tirada', async (req, res) => {
         const esPreguntaEspecifica = (tema === 'Pregunta Especifica' || tema === 'Pregunta Específica') && pregunta && pregunta.trim().length > 0;
 
         let promptSistema = '';
+        let promptUsuario = '';
 
         if (estilo === 'manual') {
             promptSistema = `Actua como un diccionario tecnico de Tarot.
-Analiza las duplas:
-- Dupla 1: ${a} y ${b}
-- Dupla 2: ${c} y ${d}
-Proporciona 3-4 interpretaciones practicas de cada combinacion.
+ESTRUCTURA DE LECTURA POR DUPLAS (OBLIGATORIA):
+- Dupla 1 (${a} + ${b}) = UNA sola interpretacion conjunta del PRESENTE.
+- Dupla 2 (${c} + ${d}) = UNA sola interpretacion conjunta del FUTURO/EVOLUCION.
+NO interpretes cartas aisladas. Cada dupla tiene un significado UNICO como conjunto.
 Tono neutro, analitico. PROHIBIDO relacionar Dupla 1 con Dupla 2.
 NO uses marcadores de posicion.
 Devuelve HTML con class reading-section.`;
+
+            if (esPreguntaEspecifica) {
+                promptUsuario = `PREGUNTA DEL CONSULTANTE: "${pregunta.trim()}"
+
+LECTURA POR DUPLAS:
+- Dupla 1 (PRESENTE): ${a} y ${b} → Interpreta estas DOS cartas JUNTAS como una sola unidad. ¿Qué dicen juntas sobre la situacion actual?
+- Dupla 2 (FUTURO/EVOLUCION): ${c} y ${d} → Interpreta estas DOS cartas JUNTAS como una sola unidad. ¿Hacia donde evoluciona la situacion?
+
+REGLAS:
+1. Responde DIRECTAMENTE a la pregunta usando las duplas como unidades.
+2. NO des significados de cartas individuales. Solo el significado conjunto de cada dupla.
+3. Si la pregunta es concreta, conecta cada dupla con su duda especifica.`;
+            } else {
+                promptUsuario = `Tema: ${tema}. Realiza la lectura por duplas:
+- Dupla 1 (PRESENTE): ${a} y ${b} → Significado conjunto de estas dos cartas juntas.
+- Dupla 2 (FUTURO): ${c} y ${d} → Significado conjunto de estas dos cartas juntas.
+
+NO interpretes carta por carta. Cada dupla es una unidad con un solo mensaje.`;
+            }
+
         } else {
             let instruccionesPersonalidad = (estilo === 'morgana' || estilo === 'magico')
                 ? 'Eres Morgana, experta lectora de Tarot. Tono mistico, seguro, directo y predictivo.'
                 : 'Eres un terapeuta y experto lector de Tarot Evolutivo. Tono reflexivo, psicologico, empatico.';
 
             promptSistema = instruccionesPersonalidad + `
-REGLAS CRITICAS:
-1. Interpretacion REAL basada en ${a}, ${b}, ${c}, ${d}.
-2. PROHIBIDO marcadores de posicion como [texto].
-3. NO uses asteriscos, guiones ni vinetas.
-4. Devuelve HTML con class reading-section.`;
-        }
+ESTRUCTURA DE LECTURA POR DUPLAS (OBLIGATORIA):
+- Dupla 1 (${a} + ${b}) = UNA sola interpretacion conjunta del PRESENTE/ESTADO ACTUAL.
+- Dupla 2 (${c} + ${d}) = UNA sola interpretacion conjunta del FUTURO/EVOLUCION.
+NO interpretes cartas aisladas. Cada dupla tiene un significado UNICO como conjunto.
+PROHIBIDO marcadores de posicion como [texto].
+NO uses asteriscos, guiones ni vinetas.
+Devuelve HTML con class reading-section.`;
 
-        let promptUsuario = '';
+            if (esPreguntaEspecifica) {
+                promptUsuario = `PREGUNTA DEL CONSULTANTE: "${pregunta.trim()}"
 
-        if (esPreguntaEspecifica) {
-            // FIX: prompt ultra-directivo para preguntas especificas
-            promptUsuario = `INSTRUCCION OBLIGATORIA: El consultante hizo una pregunta CONCRETA. Tu UNICA mision es responder a esa pregunta usando las cartas como guia.
-
-PREGUNTA DEL CONSULTANTE: "${pregunta.trim()}"
-
-CARTAS TIRADAS:
-- Dupla 1 (Presente/Pasado): ${a} y ${b}
-- Dupla 2 (Futuro/Resultado): ${c} y ${d}
+LECTURA POR DUPLAS:
+- Dupla 1 (PRESENTE): ${a} y ${b} → ¿Qué mensaje conjunto entregan estas dos cartas sobre la situacion ACTUAL del consultante?
+- Dupla 2 (FUTURO/EVOLUCION): ${c} y ${d} → ¿Qué mensaje conjunto entregan estas dos cartas sobre hacia donde EVOLUCIONA la situacion?
 
 REGLAS ESTRICTAS:
-1. Responde DIRECTAMENTE a la pregunta. NO des una lectura generica.
-2. Cada interpretacion de carta debe conectarse EXPLICITAMENTE con la pregunta.
-3. Si la pregunta es sobre amor, habla de amor. Si es trabajo, habla de trabajo. Si es si/no, responde claramente.
-4. NO uses frases como "las cartas sugieren" sin conectarlo a la pregunta.
-5. Devuelve HTML con class reading-section.`;
-        } else {
-            promptUsuario = `Tema: ${tema}. Cartas: ${a}, ${b}, ${c}, ${d}. Realiza la lectura.`;
+1. Responde DIRECTAMENTE a la pregunta del consultante.
+2. NO des significados individuales de ${a}, ${b}, ${c}, ${d}. Solo el significado CONJUNTO de cada dupla.
+3. Cada dupla es una unidad indivisible con un solo mensaje.
+4. Conecta cada dupla con la pregunta especifica del consultante.`;
+            } else {
+                promptUsuario = `Tema: ${tema}. Realiza la lectura por duplas:
+
+- Dupla 1 (PRESENTE): ${a} y ${b} → Interpreta estas dos cartas JUNTAS como una sola unidad. ¿Qué dicen juntas sobre la situacion actual?
+- Dupla 2 (FUTURO/EVOLUCION): ${c} y ${d} → Interpreta estas dos cartas JUNTAS como una sola unidad. ¿Hacia donde evoluciona la situacion?
+
+REGLA: NO interpretes carta por carta. Cada dupla tiene un significado unico como conjunto.`;
+            }
         }
 
         if (!API_KEY) {
@@ -178,7 +200,7 @@ REGLAS ESTRICTAS:
         let text = limpiarRazonamiento(data.choices[0].message.content || '');
 
         if (!text) {
-            text = `<div class="reading-section"><h3>Predicciones del Oráculo</h3><p>Las cartas ${a}, ${b}, ${c} y ${d} revelan un periodo de movimiento profundo.</p></div><div class="reading-section"><h3>Consejo y Conclusión</h3><p>Confía en tu discernimiento.</p></div>`;
+            text = `<div class="reading-section"><h3>Dupla 1: Presente (${a} + ${b})</h3><p>Estas dos cartas juntas revelan la energia actual de la situacion.</p></div><div class="reading-section"><h3>Dupla 2: Futuro (${c} + ${d})</h3><p>Estas dos cartas juntas indican la evolucion que se avecina.</p></div>`;
         }
 
         res.json({ lectura: text });
@@ -204,21 +226,23 @@ app.post('/repregunta', async (req, res) => {
         else if (estilo === 'morgana' || estilo === 'magico') personalidad = 'Morgana, lectora mística. Tono directo y firme.';
         else personalidad = 'Terapeuta de Tarot Evolutivo. Tono empático y reflexivo.';
 
-        // FIX: prompt ultra-directivo para repreguntas
+        const a = cartas?.a || '';
+        const b = cartas?.b || '';
+        const c = cartas?.c || '';
+        const d = cartas?.d || '';
+
         const promptSistema = `${personalidad}
 
-El usuario hace una NUEVA pregunta de seguimiento. Tu UNICA tarea es responder a esta nueva pregunta usando las mismas cartas como contexto.
+El usuario hace una NUEVA pregunta de seguimiento sobre la misma tirada.
 
-NUEVA PREGUNTA: "${repregunta.trim()}"
-
-CARTAS ORIGINALES DE LA TIRADA:
-- Dupla 1: ${cartas?.a || ''} y ${cartas?.b || ''}
-- Dupla 2: ${cartas?.c || ''} y ${cartas?.d || ''}
+CARTAS ORIGINALES (interpretadas por DUPLAS, no individuales):
+- Dupla 1 (PRESENTE): ${a} y ${b} → Significado conjunto de estas dos cartas juntas.
+- Dupla 2 (FUTURO): ${c} y ${d} → Significado conjunto de estas dos cartas juntas.
 
 REGLAS ESTRICTAS:
-1. Responde DIRECTAMENTE a la NUEVA PREGUNTA. No des una lectura general.
-2. NO repitas la lectura anterior. NO resumas lo ya dicho.
-3. Usa las cartas como evidencia para responder la nueva duda concreta.
+1. Responde DIRECTAMENTE a la NUEVA PREGUNTA usando el significado CONJUNTO de cada dupla.
+2. NO interpretes cartas aisladas. Cada dupla es una unidad indivisible.
+3. NO repitas la lectura anterior.
 4. Maximo 2 parrafos. NO asteriscos. Solo HTML basico.`;
 
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -310,7 +334,6 @@ app.post('/api/admin/cambiar-plan', verificarAdmin, async (req, res) => {
     }
 
     try {
-        // Construcción segura del filtro para evitar CastError con ObjectId
         const filtro = mongoose.Types.ObjectId.isValid(userId)
             ? { $or: [{ _id: userId }, { email: userId }] }
             : { email: userId.toLowerCase().trim() };
