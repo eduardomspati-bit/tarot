@@ -48,15 +48,23 @@ const Usuario = mongoose.models.Usuario || mongoose.model('Usuario', UsuarioSche
 
 const MODEL_NAME = process.env.MODEL_NAME || 'openai/gpt-oss-120b';
 const API_KEY = process.env.GROQ_API_KEY || process.env.API_KEY;
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'MarinaRabino1995';
+
+// ADMIN_TOKEN debe configurarse en .env o Render. Sin default plano en código.
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
 
 // ==========================================
 // MIDDLEWARE DE ADMIN
 // ==========================================
 function verificarAdmin(req, res, next) {
     const token = req.headers['x-admin-token'];
-    if (token !== ADMIN_TOKEN) {
-        return res.status(403).json({ error: 'Acceso denegado. Token invalido.' });
+    
+    if (!ADMIN_TOKEN) {
+        console.error("⚠️ ALERTA: ADMIN_TOKEN no está definido en variables de entorno.");
+        return res.status(500).json({ error: 'Configuración de servidor incompleta.' });
+    }
+
+    if (!token || token !== ADMIN_TOKEN) {
+        return res.status(403).json({ error: 'Acceso denegado. Token inválido o ausente.' });
     }
     next();
 }
@@ -85,7 +93,7 @@ app.post('/tirada', async (req, res) => {
 
     try {
         if (!a || !b || !c || !d) {
-            return res.status(400).json({ error: 'Faltan cartas. Envia a,b,c,d o cartas[].' });
+            return res.status(400).json({ error: 'Faltan cartas. Envía a,b,c,d o cartas[].' });
         }
 
         let promptSistema = '';
@@ -142,14 +150,14 @@ REGLAS CRITICAS:
         if (!response.ok || !data.choices || data.choices.length === 0) {
             return res.status(response.status || 500).json({
                 error: 'Respuesta incompleta de Groq',
-                detalle: data.error?.message || 'Respuesta invalida'
+                detalle: data.error?.message || 'Respuesta inválida'
             });
         }
 
         let text = limpiarRazonamiento(data.choices[0].message.content || '');
 
         if (!text) {
-            text = `<div class="reading-section"><h3>Predicciones del Oraculo</h3><p>Las cartas ${a}, ${b}, ${c} y ${d} revelan un periodo de movimiento profundo.</p></div><div class="reading-section"><h3>Consejo y Conclusion</h3><p>Confia en tu discernimiento.</p></div>`;
+            text = `<div class="reading-section"><h3>Predicciones del Oráculo</h3><p>Las cartas ${a}, ${b}, ${c} y ${d} revelan un periodo de movimiento profundo.</p></div><div class="reading-section"><h3>Consejo y Conclusión</h3><p>Confía en tu discernimiento.</p></div>`;
         }
 
         res.json({ lectura: text });
@@ -169,9 +177,9 @@ app.post('/repregunta', async (req, res) => {
 
     try {
         let personalidad = '';
-        if (estilo === 'manual') personalidad = 'Oraculo analitico de Tarot. Tono claro y didactico.';
-        else if (estilo === 'morgana' || estilo === 'magico') personalidad = 'Morgana, lectora mistica. Tono directo y firme.';
-        else personalidad = 'Terapeuta de Tarot Evolutivo. Tono empatico y reflexivo.';
+        if (estilo === 'manual') personalidad = 'Oráculo analítico de Tarot. Tono claro y didáctico.';
+        else if (estilo === 'morgana' || estilo === 'magico') personalidad = 'Morgana, lectora mística. Tono directo y firme.';
+        else personalidad = 'Terapeuta de Tarot Evolutivo. Tono empático y reflexivo.';
 
         const promptSistema = `${personalidad}
 El usuario tiene una duda de seguimiento.
@@ -179,7 +187,7 @@ CONTEXTO:
 - Dupla 1: ${cartas?.a || ''} y ${cartas?.b || ''}
 - Dupla 2: ${cartas?.c || ''} y ${cartas?.d || ''}
 - Lectura previa: "${lecturaAnterior}"
-REGLAS: Maximo 2 parrafos. NO asteriscos. Solo HTML basico.`;
+REGLAS: Máximo 2 párrafos. NO asteriscos. Solo HTML básico.`;
 
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
@@ -203,7 +211,7 @@ REGLAS: Maximo 2 parrafos. NO asteriscos. Solo HTML basico.`;
         if (!response.ok || !data.choices || data.choices.length === 0) {
             return res.status(response.status || 500).json({
                 error: 'Respuesta incompleta de Groq',
-                detalle: data.error?.message || 'Invalida'
+                detalle: data.error?.message || 'Inválida'
             });
         }
 
@@ -214,7 +222,7 @@ REGLAS: Maximo 2 parrafos. NO asteriscos. Solo HTML basico.`;
 
     } catch (error) {
         console.error('Error en /repregunta:', error);
-        res.status(500).json({ error: 'La conexion con la repregunta fallo.' });
+        res.status(500).json({ error: 'La conexión con la repregunta falló.' });
     }
 });
 
@@ -228,7 +236,7 @@ app.post('/api/usuarios/registrar', async (req, res) => {
     try {
         const hoy = new Date().toISOString().split('T')[0];
         const usuario = await Usuario.findOneAndUpdate(
-            { email },
+            { email: email.toLowerCase().trim() },
             {
                 $inc: { totalTiradas: 1 },
                 $set: { ultimaConexion: hoy },
@@ -250,7 +258,7 @@ app.post('/api/usuarios/registrar', async (req, res) => {
 // Listar todos los clientes
 app.get('/api/admin/clientes', verificarAdmin, async (req, res) => {
     try {
-        const clientes = await Usuario.find({}, { __v: 0 }).sort({ createdAt: -1 });
+        const clientes = await Usuario.find({}, { __v: 0 }).sort({ createdAt: -1 }).limit(100);
         res.json({ clientes });
     } catch (error) {
         console.error('Error en /api/admin/clientes:', error);
@@ -261,19 +269,26 @@ app.get('/api/admin/clientes', verificarAdmin, async (req, res) => {
 // Cambiar plan de un usuario
 app.post('/api/admin/cambiar-plan', verificarAdmin, async (req, res) => {
     const { userId, nuevoPlan } = req.body;
+
     if (!userId || !nuevoPlan) {
         return res.status(400).json({ error: 'Faltan userId o nuevoPlan' });
     }
     if (!['Gratis', 'Premium'].includes(nuevoPlan)) {
-        return res.status(400).json({ error: 'Plan invalido. Use Gratis o Premium' });
+        return res.status(400).json({ error: 'Plan inválido. Use Gratis o Premium' });
     }
 
     try {
+        // Construcción segura del filtro para evitar CastError con ObjectId
+        const filtro = mongoose.Types.ObjectId.isValid(userId)
+            ? { $or: [{ _id: userId }, { email: userId }] }
+            : { email: userId.toLowerCase().trim() };
+
         const usuario = await Usuario.findOneAndUpdate(
-            { $or: [{ email: userId }, { _id: userId }] },
+            filtro,
             { $set: { plan: nuevoPlan } },
             { new: true }
         );
+
         if (!usuario) {
             return res.status(404).json({ error: 'Usuario no encontrado' });
         }
