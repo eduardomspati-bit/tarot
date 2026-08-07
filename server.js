@@ -96,6 +96,9 @@ app.post('/tirada', async (req, res) => {
             return res.status(400).json({ error: 'Faltan cartas. Envía a,b,c,d o cartas[].' });
         }
 
+        // FIX: detectar pregunta especifica con o sin tilde
+        const esPreguntaEspecifica = (tema === 'Pregunta Especifica' || tema === 'Pregunta Específica') && pregunta && pregunta.trim().length > 0;
+
         let promptSistema = '';
 
         if (estilo === 'manual') {
@@ -109,7 +112,7 @@ NO uses marcadores de posicion.
 Devuelve HTML con class reading-section.`;
         } else {
             let instruccionesPersonalidad = (estilo === 'morgana' || estilo === 'magico')
-                ? 'Eres experta lectora de Tarot. Tono mistico, seguro, directo y predictivo.'
+                ? 'Eres Morgana, experta lectora de Tarot. Tono mistico, seguro, directo y predictivo.'
                 : 'Eres un terapeuta y experto lector de Tarot Evolutivo. Tono reflexivo, psicologico, empatico.';
 
             promptSistema = instruccionesPersonalidad + `
@@ -120,9 +123,27 @@ REGLAS CRITICAS:
 4. Devuelve HTML con class reading-section.`;
         }
 
-        const promptUsuario = (tema === 'Pregunta Especifica' && pregunta)
-            ? `Pregunta: "${pregunta}". Cartas: ${a}, ${b}, ${c}, ${d}. Realiza la lectura.`
-            : `Tema: ${tema}. Cartas: ${a}, ${b}, ${c}, ${d}. Realiza la lectura.`;
+        let promptUsuario = '';
+
+        if (esPreguntaEspecifica) {
+            // FIX: prompt ultra-directivo para preguntas especificas
+            promptUsuario = `INSTRUCCION OBLIGATORIA: El consultante hizo una pregunta CONCRETA. Tu UNICA mision es responder a esa pregunta usando las cartas como guia.
+
+PREGUNTA DEL CONSULTANTE: "${pregunta.trim()}"
+
+CARTAS TIRADAS:
+- Dupla 1 (Presente/Pasado): ${a} y ${b}
+- Dupla 2 (Futuro/Resultado): ${c} y ${d}
+
+REGLAS ESTRICTAS:
+1. Responde DIRECTAMENTE a la pregunta. NO des una lectura generica.
+2. Cada interpretacion de carta debe conectarse EXPLICITAMENTE con la pregunta.
+3. Si la pregunta es sobre amor, habla de amor. Si es trabajo, habla de trabajo. Si es si/no, responde claramente.
+4. NO uses frases como "las cartas sugieren" sin conectarlo a la pregunta.
+5. Devuelve HTML con class reading-section.`;
+        } else {
+            promptUsuario = `Tema: ${tema}. Cartas: ${a}, ${b}, ${c}, ${d}. Realiza la lectura.`;
+        }
 
         if (!API_KEY) {
             return res.status(500).json({ error: 'API Key no configurada.' });
@@ -173,7 +194,9 @@ REGLAS CRITICAS:
 // ==========================================
 app.post('/repregunta', async (req, res) => {
     const { cartas, lecturaAnterior, repregunta, estilo = 'filosofico' } = req.body;
-    if (!repregunta) return res.status(400).json({ error: 'Falta la repregunta.' });
+    if (!repregunta || repregunta.trim().length === 0) {
+        return res.status(400).json({ error: 'Falta la repregunta.' });
+    }
 
     try {
         let personalidad = '';
@@ -181,13 +204,22 @@ app.post('/repregunta', async (req, res) => {
         else if (estilo === 'morgana' || estilo === 'magico') personalidad = 'Morgana, lectora mística. Tono directo y firme.';
         else personalidad = 'Terapeuta de Tarot Evolutivo. Tono empático y reflexivo.';
 
+        // FIX: prompt ultra-directivo para repreguntas
         const promptSistema = `${personalidad}
-El usuario tiene una duda de seguimiento.
-CONTEXTO:
+
+El usuario hace una NUEVA pregunta de seguimiento. Tu UNICA tarea es responder a esta nueva pregunta usando las mismas cartas como contexto.
+
+NUEVA PREGUNTA: "${repregunta.trim()}"
+
+CARTAS ORIGINALES DE LA TIRADA:
 - Dupla 1: ${cartas?.a || ''} y ${cartas?.b || ''}
 - Dupla 2: ${cartas?.c || ''} y ${cartas?.d || ''}
-- Lectura previa: "${lecturaAnterior}"
-REGLAS: Máximo 2 párrafos. NO asteriscos. Solo HTML básico.`;
+
+REGLAS ESTRICTAS:
+1. Responde DIRECTAMENTE a la NUEVA PREGUNTA. No des una lectura general.
+2. NO repitas la lectura anterior. NO resumas lo ya dicho.
+3. Usa las cartas como evidencia para responder la nueva duda concreta.
+4. Maximo 2 parrafos. NO asteriscos. Solo HTML basico.`;
 
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
@@ -199,7 +231,7 @@ REGLAS: Máximo 2 párrafos. NO asteriscos. Solo HTML básico.`;
                 model: MODEL_NAME,
                 messages: [
                     { role: 'system', content: promptSistema },
-                    { role: 'user', content: repregunta }
+                    { role: 'user', content: repregunta.trim() }
                 ],
                 temperature: 0.6,
                 max_tokens: 600
