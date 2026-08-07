@@ -48,8 +48,6 @@ const Usuario = mongoose.models.Usuario || mongoose.model('Usuario', UsuarioSche
 
 const MODEL_NAME = process.env.MODEL_NAME || 'openai/gpt-oss-120b';
 const API_KEY = process.env.GROQ_API_KEY || process.env.API_KEY;
-
-// ADMIN_TOKEN debe configurarse en .env o Render. Sin default plano en código.
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
 
 // ==========================================
@@ -85,7 +83,7 @@ function limpiarRazonamiento(texto) {
 // ENDPOINT: TIRADA
 // ==========================================
 app.post('/tirada', async (req, res) => {
-    let { tema, a, b, c, d, estilo = 'filosofico', pregunta, cartas } = req.body;
+    let { tema, a, b, c, d, estilo = 'filosofico', pregunta, cartas, modo } = req.body;
 
     if (!a && cartas && Array.isArray(cartas) && cartas.length >= 4) {
         a = cartas[0]; b = cartas[1]; c = cartas[2]; d = cartas[3];
@@ -96,13 +94,36 @@ app.post('/tirada', async (req, res) => {
             return res.status(400).json({ error: 'Faltan cartas. Envía a,b,c,d o cartas[].' });
         }
 
-        // FIX: detectar pregunta especifica con o sin tilde
         const esPreguntaEspecifica = (tema === 'Pregunta Especifica' || tema === 'Pregunta Específica') && pregunta && pregunta.trim().length > 0;
+        const esModoGratis = modo === 'gratis';
 
         let promptSistema = '';
         let promptUsuario = '';
 
-        if (estilo === 'manual') {
+        // ========== MODO GRATIS: Solo Conclusión + Predicción ==========
+        if (esModoGratis) {
+            promptSistema = `Eres Morgana, experta lectora de Tarot. Tono místico, directo y predictivo.
+ESTRUCTURA OBLIGATORIA - Solo 2 secciones:
+1. CONCLUSIÓN (sobre la pregunta del consultante, basada en la Dupla 1)
+2. PREDICCIÓN (sobre el futuro, basada en la Dupla 2)
+
+REGLAS ESTRICTAS:
+- Máximo 120 palabras en total.
+- NO saludos. NO introducciones. NO "las cartas dicen" genérico.
+- Responde DIRECTAMENTE a la pregunta del consultante.
+- Cada dupla se lee como UNIDAD INDIVISIBLE (no carta por carta).
+- Devuelve HTML simple con class reading-section.`;
+
+            promptUsuario = `PREGUNTA: "${pregunta || 'Consulta general'}"
+
+DUPLAS:
+- Dupla 1 (PRESENTE/SITUACIÓN ACTUAL): ${a} y ${b} → Una frase de conclusión directa sobre la pregunta.
+- Dupla 2 (FUTURO/EVOLUCIÓN): ${c} y ${d} → Una frase de predicción sobre qué va a pasar.
+
+Responde AHORA en español, directo al grano.`;
+
+        // ========== MODO MANUAL ==========
+        } else if (estilo === 'manual') {
             promptSistema = `Actua como un diccionario tecnico de Tarot.
 ESTRUCTURA DE LECTURA POR DUPLAS (OBLIGATORIA):
 - Dupla 1 (${a} + ${b}) = UNA sola interpretacion conjunta del PRESENTE.
@@ -131,6 +152,7 @@ REGLAS:
 NO interpretes carta por carta. Cada dupla es una unidad con un solo mensaje.`;
             }
 
+        // ========== MODO NORMAL (magico/filosofico) ==========
         } else {
             let instruccionesPersonalidad = (estilo === 'morgana' || estilo === 'magico')
                 ? 'Eres Morgana, experta lectora de Tarot. Tono mistico, seguro, directo y predictivo.'
@@ -183,8 +205,8 @@ REGLA: NO interpretes carta por carta. Cada dupla tiene un significado unico com
                     { role: 'system', content: promptSistema },
                     { role: 'user', content: promptUsuario }
                 ],
-                temperature: estilo === 'manual' ? 0.2 : 0.7,
-                max_tokens: 1500
+                temperature: esModoGratis ? 0.8 : (estilo === 'manual' ? 0.2 : 0.7),
+                max_tokens: esModoGratis ? 300 : 1500
             })
         });
 
@@ -200,7 +222,11 @@ REGLA: NO interpretes carta por carta. Cada dupla tiene un significado unico com
         let text = limpiarRazonamiento(data.choices[0].message.content || '');
 
         if (!text) {
-            text = `<div class="reading-section"><h3>Dupla 1: Presente (${a} + ${b})</h3><p>Estas dos cartas juntas revelan la energia actual de la situacion.</p></div><div class="reading-section"><h3>Dupla 2: Futuro (${c} + ${d})</h3><p>Estas dos cartas juntas indican la evolucion que se avecina.</p></div>`;
+            if (esModoGratis) {
+                text = `<div class="reading-section"><h3>✨ Conclusión</h3><p>Las cartas ${a} y ${b} indican que la situación actual requiere atención.</p></div><div class="reading-section"><h3>🔮 Predicción</h3><p>La Dupla ${c} y ${d} revela un cambio positivo en el horizonte.</p></div>`;
+            } else {
+                text = `<div class="reading-section"><h3>Dupla 1: Presente (${a} + ${b})</h3><p>Estas dos cartas juntas revelan la energia actual de la situacion.</p></div><div class="reading-section"><h3>Dupla 2: Futuro (${c} + ${d})</h3><p>Estas dos cartas juntas indican la evolucion que se avecina.</p></div>`;
+            }
         }
 
         res.json({ lectura: text });
@@ -234,9 +260,6 @@ app.post('/repregunta', async (req, res) => {
         const promptSistema = `${personalidad}
 
 El usuario hace una NUEVA pregunta de seguimiento sobre la misma tirada.
-
-LECTURA PREVIA RECIBIDA:
-"${lecturaAnterior || 'No disponible'}"
 
 CARTAS ORIGINALES (interpretadas por DUPLAS, no individuales):
 - Dupla 1 (PRESENTE): ${a} y ${b} → Significado conjunto de estas dos cartas juntas.
@@ -314,7 +337,6 @@ app.post('/api/usuarios/registrar', async (req, res) => {
 // ENDPOINTS DE ADMIN
 // ==========================================
 
-// Listar todos los clientes
 app.get('/api/admin/clientes', verificarAdmin, async (req, res) => {
     try {
         const clientes = await Usuario.find({}, { __v: 0 }).sort({ createdAt: -1 }).limit(100);
@@ -325,7 +347,6 @@ app.get('/api/admin/clientes', verificarAdmin, async (req, res) => {
     }
 });
 
-// Cambiar plan de un usuario
 app.post('/api/admin/cambiar-plan', verificarAdmin, async (req, res) => {
     const { userId, nuevoPlan } = req.body;
 
