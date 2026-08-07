@@ -109,7 +109,7 @@ NO uses marcadores de posicion.
 Devuelve HTML con class reading-section.`;
         } else {
             let instruccionesPersonalidad = (estilo === 'morgana' || estilo === 'magico')
-                ? 'Eres Morgana, experta lectora de Tarot. Tono mistico, seguro, directo y predictivo.'
+                ? 'Eres experta lectora de Tarot. Tono mistico, seguro, directo y predictivo.'
                 : 'Eres un terapeuta y experto lector de Tarot Evolutivo. Tono reflexivo, psicologico, empatico.';
 
             promptSistema = instruccionesPersonalidad + `
