@@ -120,53 +120,95 @@ app.post('/tirada', async (req, res) => {
         let promptSistema = '';
         let promptUsuario = '';
 
+        // ========== MODO GRATIS ==========
         if (esModoGratis) {
             promptSistema = `Eres Morgana, experta lectora de Tarot. Tono mistico, directo y predictivo.
-ESTRUCTURA OBLIGATORIA - Solo 2 secciones:
-1. CONCLUSION (sobre la pregunta del consultante, basada en la Dupla 1)
+ESTRUCTURA OBLIGATORIA - Solo 2 secciones HTML:
+1. CONCLUSION (responde DIRECTAMENTE a la pregunta del consultante, basada en la Dupla 1)
 2. PREDICCION (sobre el futuro, basada en la Dupla 2)
 
 REGLAS ESTRICTAS:
 - Maximo 120 palabras en total.
-- NO saludos. NO introducciones.
-- Cada dupla se lee como UNIDAD INDIVISIBLE.
+- NO saludos. NO introducciones. NO "las cartas dicen" generico.
+- Responde DIRECTAMENTE a la pregunta del consultante.
+- Cada dupla se lee como UNIDAD INDIVISIBLE (no carta por carta).
 - Devuelve HTML simple con class reading-section.`;
 
-            promptUsuario = `PREGUNTA: "${preguntaLimpia || 'Consulta general'}"
+            promptUsuario = `PREGUNTA DEL CONSULTANTE: "${preguntaLimpia || 'Consulta general'}"
 
-DUPLAS:
+CARTAS TIRADAS (por duplas):
 - Dupla 1 (PRESENTE/SITUACION ACTUAL): ${a} y ${b}
 - Dupla 2 (FUTURO/EVOLUCION): ${c} y ${d}
 
-Responde AHORA en espanol, directo al grano.`;
+INSTRUCCION: Interpreta cada dupla como UNA SOLA UNIDAD. La Dupla 1 responde a la pregunta del consultante sobre su situacion actual. La Dupla 2 predice que va a pasar. NO des significados de cartas individuales. Responde AHORA en espanol, directo al grano.`;
 
+        // ========== MODO MANUAL ==========
         } else if (estilo === 'manual') {
             promptSistema = `Actua como un diccionario tecnico de Tarot.
 ESTRUCTURA DE LECTURA POR DUPLAS (OBLIGATORIA):
 - Dupla 1 (${a} + ${b}) = UNA sola interpretacion conjunta del PRESENTE.
 - Dupla 2 (${c} + ${d}) = UNA sola interpretacion conjunta del FUTURO/EVOLUCION.
-NO interpretes cartas aisladas.
-Tono neutro, analitico. Devuelve HTML con class reading-section.`;
+NO interpretes cartas aisladas. Cada dupla tiene un significado UNICO como conjunto.
+Tono neutro, analitico. PROHIBIDO relacionar Dupla 1 con Dupla 2.
+NO uses marcadores de posicion como [texto].
+Devuelve HTML con class reading-section.`;
 
-            promptUsuario = esPreguntaEspecifica 
-                ? `PREGUNTA DEL CONSULTANTE: "${preguntaLimpia}"\n\nDUPLAS:\n- Dupla 1 (PRESENTE): ${a} y ${b}\n- Dupla 2 (FUTURO/EVOLUCION): ${c} y ${d}`
-                : `Tema: ${tema}.\n\nDUPLAS:\n- Dupla 1 (PRESENTE): ${a} y ${b}\n- Dupla 2 (FUTURO): ${c} y ${d}`;
+            if (esPreguntaEspecifica) {
+                promptUsuario = `PREGUNTA ESPECIFICA DEL CONSULTANTE: "${preguntaLimpia}"
 
+LECTURA POR DUPLAS:
+- Dupla 1 (PRESENTE): ${a} y ${b} -> Interpreta estas DOS cartas JUNTAS como una sola unidad. Que dicen juntas sobre la situacion actual RELACIONADA CON LA PREGUNTA?
+- Dupla 2 (FUTURO/EVOLUCION): ${c} y ${d} -> Interpreta estas DOS cartas JUNTAS como una sola unidad. Hacia donde evoluciona la situacion RELACIONADA CON LA PREGUNTA?
+
+REGLAS:
+1. Responde DIRECTAMENTE a la pregunta usando las duplas como unidades.
+2. NO des significados de cartas individuales. Solo el significado conjunto de cada dupla.
+3. Cada parrafo debe conectar explicitamente con la pregunta del consultante.
+4. Si la pregunta es concreta, conecta cada dupla con su duda especifica.`;
+            } else {
+                promptUsuario = `Tema: ${tema}. Realiza la lectura por duplas:
+- Dupla 1 (PRESENTE): ${a} y ${b} -> Significado conjunto de estas dos cartas juntas.
+- Dupla 2 (FUTURO): ${c} y ${d} -> Significado conjunto de estas dos cartas juntas.
+
+NO interpretes carta por carta. Cada dupla es una unidad con un solo mensaje.`;
+            }
+
+        // ========== MODO NORMAL (magico/filosofico) ==========
         } else {
             const instruccionesPersonalidad = (estilo === 'morgana' || estilo === 'magico')
-                ? 'Eres Morgana, experta lectora de Tarot. Tono mistico, seguro, directo y predictivo.'
-                : 'Eres un terapeuta y experto lector de Tarot Evolutivo. Tono reflexivo, psicologico, empatico.';
+                ? 'Eres Morgana, experta lectora de Tarot. Tono mistico, seguro, directo y predictivo. NO uses frases genericas como "las cartas te invitan a reflexionar". Da respuestas concretas.'
+                : 'Eres un terapeuta y experto lector de Tarot Evolutivo. Tono reflexivo, psicologico, empatico. Da interpretaciones profundas pero concretas, no vaguedades.';
 
             promptSistema = `${instruccionesPersonalidad}
 ESTRUCTURA DE LECTURA POR DUPLAS (OBLIGATORIA):
 - Dupla 1 (${a} + ${b}) = UNA sola interpretacion conjunta del PRESENTE/ESTADO ACTUAL.
 - Dupla 2 (${c} + ${d}) = UNA sola interpretacion conjunta del FUTURO/EVOLUCION.
 NO interpretes cartas aisladas. Cada dupla tiene un significado UNICO como conjunto.
+PROHIBIDO marcadores de posicion como [texto].
+NO uses asteriscos, guiones ni vinetas.
 Devuelve HTML con class reading-section.`;
 
-            promptUsuario = esPreguntaEspecifica
-                ? `PREGUNTA DEL CONSULTANTE: "${preguntaLimpia}"\n\nDUPLAS:\n- Dupla 1 (PRESENTE): ${a} y ${b}\n- Dupla 2 (FUTURO/EVOLUCION): ${c} y ${d}`
-                : `Tema: ${tema}.\n\nDUPLAS:\n- Dupla 1 (PRESENTE): ${a} y ${b}\n- Dupla 2 (FUTURO): ${c} y ${d}`;
+            if (esPreguntaEspecifica) {
+                promptUsuario = `PREGUNTA ESPECIFICA DEL CONSULTANTE: "${preguntaLimpia}"
+
+LECTURA POR DUPLAS:
+- Dupla 1 (PRESENTE): ${a} y ${b} -> Que mensaje conjunto entregan estas dos cartas sobre la situacion ACTUAL del consultante EN RELACION A SU PREGUNTA?
+- Dupla 2 (FUTURO/EVOLUCION): ${c} y ${d} -> Que mensaje conjunto entregan estas dos cartas sobre hacia donde EVOLUCIONA la situacion EN RELACION A SU PREGUNTA?
+
+REGLAS ESTRICTAS:
+1. Responde DIRECTAMENTE a la pregunta del consultante. NO te desvies.
+2. NO des significados individuales de ${a}, ${b}, ${c}, ${d}. Solo el significado CONJUNTO de cada dupla.
+3. Cada dupla es una unidad indivisible con un solo mensaje.
+4. Conecta CADA dupla explicitamente con la pregunta especifica del consultante.
+5. Si la pregunta es sobre amor, habla de amor. Si es sobre trabajo, habla de trabajo. Si es sobre dinero, habla de dinero. NO seas generico.`;
+            } else {
+                promptUsuario = `Tema: ${tema}. Realiza la lectura por duplas:
+
+- Dupla 1 (PRESENTE): ${a} y ${b} -> Interpreta estas dos cartas JUNTAS como una sola unidad. Que dicen juntas sobre la situacion actual?
+- Dupla 2 (FUTURO/EVOLUCION): ${c} y ${d} -> Interpreta estas dos cartas JUNTAS como una sola unidad. Hacia donde evoluciona la situacion?
+
+REGLA: NO interpretes carta por carta. Cada dupla tiene un significado unico como conjunto.`;
+            }
         }
 
         console.log('Llamando a Groq API... Modelo:', MODEL_NAME);
@@ -191,7 +233,7 @@ Devuelve HTML con class reading-section.`;
         const data = await response.json();
 
         console.log('Status Groq:', response.status);
-        console.log('Respuesta Groq:', JSON.stringify(data));
+        if (data.error) console.log('Error Groq:', data.error.message);
 
         if (!response.ok || !data.choices || data.choices.length === 0) {
             console.error('Groq error:', data.error?.message || 'Sin choices');
@@ -246,12 +288,18 @@ app.post('/repregunta', async (req, res) => {
         const d = cartas?.d || '';
 
         const promptSistema = `${personalidad}
-NUEVA PREGUNTA DE SEGUIMIENTO sobre la misma tirada.
-CARTAS (interpretadas por DUPLAS):
-- Dupla 1: ${a} y ${b}
-- Dupla 2: ${c} y ${d}
+El usuario hace una NUEVA PREGUNTA DE SEGUIMIENTO sobre la misma tirada.
 
-REGLAS: Responde DIRECTAMENTE en maximo 2 parrafos. Solo HTML basico. Sin asteriscos.`;
+CARTAS ORIGINALES (interpretadas por DUPLAS, no individuales):
+- Dupla 1 (PRESENTE): ${a} y ${b} -> Significado conjunto de estas dos cartas juntas.
+- Dupla 2 (FUTURO): ${c} y ${d} -> Significado conjunto de estas dos cartas juntas.
+
+REGLAS ESTRICTAS:
+1. Responde DIRECTAMENTE a la NUEVA PREGUNTA usando el significado CONJUNTO de cada dupla.
+2. NO interpretes cartas aisladas. Cada dupla es una unidad indivisible.
+3. NO repitas la lectura anterior.
+4. Conecta tu respuesta explicitamente con la nueva pregunta del usuario.
+5. Maximo 2 parrafos. NO asteriscos. Solo HTML basico.`;
 
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
