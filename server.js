@@ -46,7 +46,7 @@ const UsuarioSchema = new mongoose.Schema({
 
 const Usuario = mongoose.models.Usuario || mongoose.model('Usuario', UsuarioSchema);
 
-const MODEL_NAME = process.env.MODEL_NAME || 'openai/gpt-oss-120b';
+const MODEL_NAME = process.env.MODEL_NAME || 'qwen/qwen3.6-27b';
 const API_KEY = process.env.GROQ_API_KEY || process.env.API_KEY;
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
 
