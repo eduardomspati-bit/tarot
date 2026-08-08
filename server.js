@@ -79,73 +79,103 @@ function verificarAdmin(req, res, next) {
 // ==========================================
 // FUNCION AUXILIAR: LIMPIAR RESPUESTA DE LA IA
 // ==========================================
-// El modelo qwen a veces devuelve razonamiento en texto plano antes de la respuesta real.
-// Esta funcion detecta y corta ese razonamiento.
+// El modelo qwen a veces devuelve razonamiento dentro de <think>...</think>
+// o como texto plano "Thinking Process:" antes de la respuesta real.
 function limpiarRazonamiento(texto) {
     if (!texto) return '';
 
-    // 1. Borrar bloques de razonamiento con tags XML
-    texto = texto.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '');
-    texto = texto.replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '');
-    texto = texto.replace(/<think>[\s\S]*?<\/think>/gi, '');
+    // ========== PASO 1: Cortar tags <think>, <thinking>, <reasoning> ==========
+    // Usamos indexOf en vez de regex para mayor robustez
+    const tags = ['<think>', '<thinking>', '<reasoning>'];
+    const cierres = ['</think>', '</thinking>', '</reasoning>'];
 
-    // 2. Borrar markdown de codigo
+    for (let i = 0; i < tags.length; i++) {
+        const idxApertura = texto.indexOf(tags[i]);
+        if (idxApertura !== -1) {
+            const idxCierre = texto.indexOf(cierres[i], idxApertura);
+            if (idxCierre !== -1) {
+                // Cortar TODO desde el tag de apertura hasta el de cierre (inclusive)
+                const antes = texto.substring(0, idxApertura);
+                const despues = texto.substring(idxCierre + cierres[i].length);
+                texto = (antes + despues).trim();
+                console.log('  Tag', tags[i], 'cortado. Antes:', antes.length, 'Despues:', despues.length);
+            }
+        }
+    }
+
+    // ========== PASO 2: Borrar markdown de codigo ==========
     texto = texto.replace(/```html/gi, '').replace(/```/g, '');
 
-    // 3. DETECTAR Y CORTAR razonamiento en texto plano (qwen lo hace asi)
-    // Busca patrones como "Thinking Process:", "Thinking:", "Razonamiento:", etc.
-    // El razonamiento suele terminar donde empieza la respuesta real (HTML o texto directo)
-    const patronesInicioRazonamiento = [
-        /Thinking Process:\s*[\s\S]*?(?=<div|Conclusi|Predicci|Dupla|Presente|Futuro|El camino|Debes|La situaci|Las cartas)/i,
-        /Thinking:\s*[\s\S]*?(?=<div|Conclusi|Predicci|Dupla|Presente|Futuro|El camino|Debes|La situaci|Las cartas)/i,
-        /Razonamiento:\s*[\s\S]*?(?=<div|Conclusi|Predicci|Dupla|Presente|Futuro|El camino|Debes|La situaci|Las cartas)/i,
-        /Proceso de pensamiento:\s*[\s\S]*?(?=<div|Conclusi|Predicci|Dupla|Presente|Futuro|El camino|Debes|La situaci|Las cartas)/i,
+    // ========== PASO 3: Cortar razonamiento en texto plano ==========
+    // Buscar patrones como "Thinking Process:" y cortar hasta la respuesta real
+    const patronesRazonamiento = [
+        'Thinking Process:',
+        'Here\'s a thinking process:',
+        'Thinking:',
+        'Razonamiento:',
+        'Proceso de pensamiento:'
     ];
 
-    for (const patron of patronesInicioRazonamiento) {
-        const match = texto.match(patron);
-        if (match) {
-            // Reemplazar solo la parte del razonamiento, dejar lo que viene despues
-            const respuestaReal = texto.replace(match[0], '').trim();
-            if (respuestaReal.length > 20) {
-                console.log('  Razonamiento detectado y cortado (', match[0].length, 'chars)');
-                texto = respuestaReal;
-                break;
+    for (const patron of patronesRazonamiento) {
+        const idx = texto.indexOf(patron);
+        if (idx !== -1) {
+            // Buscar donde empieza la respuesta real (primer <div o primer parrafo sustancial)
+            const desdePatron = texto.substring(idx);
+            const idxDiv = desdePatron.indexOf('<div');
+            const idxSaltoDoble = desdePatron.indexOf('\n\n');
+
+            let corte = -1;
+            if (idxDiv !== -1) corte = idx + idxDiv;
+            else if (idxSaltoDoble !== -1 && idxSaltoDoble > patron.length + 50) corte = idx + idxSaltoDoble;
+
+            if (corte !== -1) {
+                const antes = texto.substring(0, idx).trim();
+                const despues = texto.substring(corte).trim();
+                if (despues.length > 20) {
+                    texto = (antes + '\n' + despues).trim();
+                    console.log('  Patron "' + patron + '" cortado. Respuesta real encontrada.');
+                    break;
+                }
             }
         }
     }
 
-    // 4. Si no hay HTML, buscar donde empieza la respuesta real en espanol
-    // A veces el razonamiento termina con un numero seguido de punto y la respuesta
-    const limpio = texto.trim();
+    // ========== PASO 4: Limpiar lineas de razonamiento sueltas ==========
+    const lineas = texto.split('\n');
+    const lineasLimpias = [];
+    let empezoRespuesta = false;
 
-    // 5. Buscar primer <div para cortar intro basura
-    const idxDiv = limpio.indexOf('<div');
-    if (idxDiv !== -1) {
-        return limpio.substring(idxDiv);
-    }
+    for (const linea of lineas) {
+        const trim = linea.trim();
 
-    // 6. Si no hay <div, buscar primer parrafo sustancial (mas de 20 chars)
-    const lineas = limpio.split('\n').map(l => l.trim()).filter(l => l.length > 20);
-    if (lineas.length > 0) {
-        // Si la primera linea parece razonamiento (empieza con numero o "Step"), saltearla
-        let primeraLineaValida = 0;
-        for (let i = 0; i < lineas.length; i++) {
-            const linea = lineas[i];
-            if (!/^\d+\./.test(linea) && 
-                !/^Step\s*\d+/i.test(linea) &&
-                !/^Analyze/i.test(linea) &&
-                !/^Interpret/i.test(linea) &&
-                !/^Draft/i.test(linea) &&
-                !/\*\*/.test(linea)) {
-                primeraLineaValida = i;
-                break;
-            }
+        // Si ya empezo la respuesta real, guardar todo
+        if (empezoRespuesta) {
+            lineasLimpias.push(linea);
+            continue;
         }
-        return lineas.slice(primeraLineaValida).join('\n');
+
+        // Detectar inicio de respuesta real
+        if (trim.startsWith('<div') || 
+            trim.startsWith('<h3') ||
+            trim.startsWith('<p') ||
+            trim.startsWith('Conclusi') ||
+            trim.startsWith('Predicci') ||
+            trim.startsWith('Dupla') ||
+            trim.startsWith('Debes') ||
+            trim.startsWith('El camino') ||
+            trim.startsWith('La situaci') ||
+            trim.startsWith('Las cartas') ||
+            (trim.length > 30 && !trim.match(/^\d+\./) && !trim.startsWith('-') && !trim.startsWith('*'))) {
+            empezoRespuesta = true;
+            lineasLimpias.push(linea);
+        }
     }
 
-    return limpio;
+    if (lineasLimpias.length > 0) {
+        texto = lineasLimpias.join('\n').trim();
+    }
+
+    return texto;
 }
 
 // ==========================================
@@ -312,11 +342,11 @@ REGLA: NO interpretes carta por carta. Cada dupla tiene un significado unico com
 
         const rawContent = data.choices[0].message?.content || '';
         console.log('Raw content length:', rawContent.length);
-        console.log('Raw content primeros 300 chars:', rawContent.substring(0, 300));
+        console.log('Raw content primeros 200 chars:', rawContent.substring(0, 200));
 
         let text = limpiarRazonamiento(rawContent);
         console.log('Limpio length:', text.length);
-        console.log('Limpio primeros 300 chars:', text.substring(0, 300));
+        console.log('Limpio primeros 200 chars:', text.substring(0, 200));
 
         if (!text) {
             console.warn('Texto vacio despues de limpiar, usando fallback');
