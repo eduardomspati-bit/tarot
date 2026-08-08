@@ -49,8 +49,6 @@ const Usuario = mongoose.models.Usuario || mongoose.model('Usuario', UsuarioSche
 // ==========================================
 // 3. CONFIGURACION GROQ
 // ==========================================
-// qwen/qwen3.6-27b: modelo estable, no genera thinking tags, buen precio
-// openai/gpt-oss-20b: alternativa production pero genera reasoning tags
 const MODEL_NAME = process.env.MODEL_NAME || 'qwen/qwen3.6-27b';
 const API_KEY = process.env.GROQ_API_KEY || process.env.API_KEY;
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
@@ -79,46 +77,72 @@ function verificarAdmin(req, res, next) {
 }
 
 // ==========================================
-// FUNCION AUXILIAR: LIMPIAR HTML/THINKING
+// FUNCION AUXILIAR: LIMPIAR RESPUESTA DE LA IA
 // ==========================================
+// El modelo qwen a veces devuelve razonamiento en texto plano antes de la respuesta real.
+// Esta funcion detecta y corta ese razonamiento.
 function limpiarRazonamiento(texto) {
     if (!texto) return '';
 
-    // Guardar original por si acaso
-    const original = texto;
-
-    // Borrar bloques de razonamiento de modelos reasoning
+    // 1. Borrar bloques de razonamiento con tags XML
     texto = texto.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '');
     texto = texto.replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '');
     texto = texto.replace(/<think>[\s\S]*?<\/think>/gi, '');
 
-    // Borrar markdown de codigo
+    // 2. Borrar markdown de codigo
     texto = texto.replace(/```html/gi, '').replace(/```/g, '');
 
-    // Limpiar espacios
-    const limpio = texto.trim();
+    // 3. DETECTAR Y CORTAR razonamiento en texto plano (qwen lo hace asi)
+    // Busca patrones como "Thinking Process:", "Thinking:", "Razonamiento:", etc.
+    // El razonamiento suele terminar donde empieza la respuesta real (HTML o texto directo)
+    const patronesInicioRazonamiento = [
+        /Thinking Process:\s*[\s\S]*?(?=<div|Conclusi|Predicci|Dupla|Presente|Futuro|El camino|Debes|La situaci|Las cartas)/i,
+        /Thinking:\s*[\s\S]*?(?=<div|Conclusi|Predicci|Dupla|Presente|Futuro|El camino|Debes|La situaci|Las cartas)/i,
+        /Razonamiento:\s*[\s\S]*?(?=<div|Conclusi|Predicci|Dupla|Presente|Futuro|El camino|Debes|La situaci|Las cartas)/i,
+        /Proceso de pensamiento:\s*[\s\S]*?(?=<div|Conclusi|Predicci|Dupla|Presente|Futuro|El camino|Debes|La situaci|Las cartas)/i,
+    ];
 
-    // Si quedo vacio despues de limpiar pero el original tenia texto,
-    // puede ser que el modelo devolvio SOLO thinking tags.
-    // En ese caso, intentar extraer el contenido util del thinking tag
-    if (!limpio && original.trim()) {
-        // Buscar si hay contenido fuera de thinking tags
-        const fueraThinking = original.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '')
-                                      .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '')
-                                      .replace(/<think>[\s\S]*?<\/think>/gi, '')
-                                      .trim();
-        if (fueraThinking) {
-            return fueraThinking;
+    for (const patron of patronesInicioRazonamiento) {
+        const match = texto.match(patron);
+        if (match) {
+            // Reemplazar solo la parte del razonamiento, dejar lo que viene despues
+            const respuestaReal = texto.replace(match[0], '').trim();
+            if (respuestaReal.length > 20) {
+                console.log('  Razonamiento detectado y cortado (', match[0].length, 'chars)');
+                texto = respuestaReal;
+                break;
+            }
         }
-        // Si todo era thinking, devolver el original (mejor que nada)
-        console.log('  ADVERTENCIA: modelo devolvio solo thinking tags');
-        return original.trim();
     }
 
-    // Buscar primer <div para cortar intro basura
-    const idx = limpio.indexOf('<div');
-    if (idx !== -1) {
-        return limpio.substring(idx);
+    // 4. Si no hay HTML, buscar donde empieza la respuesta real en espanol
+    // A veces el razonamiento termina con un numero seguido de punto y la respuesta
+    const limpio = texto.trim();
+
+    // 5. Buscar primer <div para cortar intro basura
+    const idxDiv = limpio.indexOf('<div');
+    if (idxDiv !== -1) {
+        return limpio.substring(idxDiv);
+    }
+
+    // 6. Si no hay <div, buscar primer parrafo sustancial (mas de 20 chars)
+    const lineas = limpio.split('\n').map(l => l.trim()).filter(l => l.length > 20);
+    if (lineas.length > 0) {
+        // Si la primera linea parece razonamiento (empieza con numero o "Step"), saltearla
+        let primeraLineaValida = 0;
+        for (let i = 0; i < lineas.length; i++) {
+            const linea = lineas[i];
+            if (!/^\d+\./.test(linea) && 
+                !/^Step\s*\d+/i.test(linea) &&
+                !/^Analyze/i.test(linea) &&
+                !/^Interpret/i.test(linea) &&
+                !/^Draft/i.test(linea) &&
+                !/\*\*/.test(linea)) {
+                primeraLineaValida = i;
+                break;
+            }
+        }
+        return lineas.slice(primeraLineaValida).join('\n');
     }
 
     return limpio;
@@ -158,7 +182,7 @@ app.post('/tirada', async (req, res) => {
         // ========== MODO GRATIS ==========
         if (esModoGratis) {
             promptSistema = `Eres Morgana, experta lectora de Tarot. Tono mistico, directo y predictivo.
-ESTRUCTURA OBLIGATORIA - Devuelve SOLO 2 secciones HTML:
+ESTRUCTURA OBLIGATORIA - Devuelve SOLO 2 secciones HTML, sin nada mas:
 1. CONCLUSION (responde DIRECTAMENTE a la pregunta del consultante, basada en la Dupla 1)
 2. PREDICCION (sobre el futuro, basada en la Dupla 2)
 
@@ -168,7 +192,8 @@ REGLAS ESTRICTAS:
 - Responde DIRECTAMENTE a la pregunta del consultante.
 - Cada dupla se lee como UNIDAD INDIVISIBLE (no carta por carta).
 - Devuelve HTML simple con class reading-section.
-- NO uses markdown, NO uses asteriscos.`;
+- NO uses markdown, NO uses asteriscos, NO escribas tu proceso de pensamiento.
+- Responde UNICAMENTE con el HTML, sin explicar como llegaste a la conclusion.`;
 
             promptUsuario = `PREGUNTA DEL CONSULTANTE: "${preguntaLimpia || 'Consulta general'}"
 
@@ -176,7 +201,7 @@ CARTAS TIRADAS (por duplas):
 - Dupla 1 (PRESENTE/SITUACION ACTUAL): ${a} y ${b}
 - Dupla 2 (FUTURO/EVOLUCION): ${c} y ${d}
 
-INSTRUCCION: Interpreta cada dupla como UNA SOLA UNIDAD. La Dupla 1 responde a la pregunta del consultante sobre su situacion actual. La Dupla 2 predice que va a pasar. NO des significados de cartas individuales. Responde AHORA en espanol, directo al grano.`;
+INSTRUCCION: Interpreta cada dupla como UNA SOLA UNIDAD. La Dupla 1 responde a la pregunta del consultante sobre su situacion actual. La Dupla 2 predice que va a pasar. NO des significados de cartas individuales. Responde AHORA en espanol, directo al grano, SOLO con el HTML.`;
 
         // ========== MODO MANUAL ==========
         } else if (estilo === 'manual') {
@@ -188,7 +213,7 @@ NO interpretes cartas aisladas. Cada dupla tiene un significado UNICO como conju
 Tono neutro, analitico. PROHIBIDO relacionar Dupla 1 con Dupla 2.
 NO uses marcadores de posicion como [texto].
 Devuelve HTML con class reading-section.
-NO uses markdown, NO uses asteriscos.`;
+NO uses markdown, NO uses asteriscos, NO escribas tu proceso de pensamiento.`;
 
             if (esPreguntaEspecifica) {
                 promptUsuario = `PREGUNTA ESPECIFICA DEL CONSULTANTE: "${preguntaLimpia}"
@@ -201,7 +226,8 @@ REGLAS:
 1. Responde DIRECTAMENTE a la pregunta usando las duplas como unidades.
 2. NO des significados de cartas individuales. Solo el significado conjunto de cada dupla.
 3. Cada parrafo debe conectar explicitamente con la pregunta del consultante.
-4. Si la pregunta es concreta, conecta cada dupla con su duda especifica.`;
+4. Si la pregunta es concreta, conecta cada dupla con su duda especifica.
+5. Responde SOLO con el HTML, sin explicar tu razonamiento.`;
             } else {
                 promptUsuario = `Tema: ${tema}. Realiza la lectura por duplas:
 - Dupla 1 (PRESENTE): ${a} y ${b} -> Significado conjunto de estas dos cartas juntas.
@@ -224,7 +250,7 @@ NO interpretes cartas aisladas. Cada dupla tiene un significado UNICO como conju
 PROHIBIDO marcadores de posicion como [texto].
 NO uses asteriscos, guiones ni vinetas.
 Devuelve HTML con class reading-section.
-NO uses markdown.`;
+NO uses markdown, NO escribas tu proceso de pensamiento.`;
 
             if (esPreguntaEspecifica) {
                 promptUsuario = `PREGUNTA ESPECIFICA DEL CONSULTANTE: "${preguntaLimpia}"
@@ -238,7 +264,8 @@ REGLAS ESTRICTAS:
 2. NO des significados individuales de ${a}, ${b}, ${c}, ${d}. Solo el significado CONJUNTO de cada dupla.
 3. Cada dupla es una unidad indivisible con un solo mensaje.
 4. Conecta CADA dupla explicitamente con la pregunta especifica del consultante.
-5. Si la pregunta es sobre amor, habla de amor. Si es sobre trabajo, habla de trabajo. Si es sobre dinero, habla de dinero. NO seas generico.`;
+5. Si la pregunta es sobre amor, habla de amor. Si es sobre trabajo, habla de trabajo. Si es sobre dinero, habla de dinero. NO seas generico.
+6. Responde SOLO con el HTML, sin explicar tu razonamiento.`;
             } else {
                 promptUsuario = `Tema: ${tema}. Realiza la lectura por duplas:
 
@@ -285,10 +312,11 @@ REGLA: NO interpretes carta por carta. Cada dupla tiene un significado unico com
 
         const rawContent = data.choices[0].message?.content || '';
         console.log('Raw content length:', rawContent.length);
-        console.log('Raw content preview:', rawContent.substring(0, 200));
+        console.log('Raw content primeros 300 chars:', rawContent.substring(0, 300));
 
         let text = limpiarRazonamiento(rawContent);
         console.log('Limpio length:', text.length);
+        console.log('Limpio primeros 300 chars:', text.substring(0, 300));
 
         if (!text) {
             console.warn('Texto vacio despues de limpiar, usando fallback');
@@ -342,7 +370,8 @@ REGLAS ESTRICTAS:
 2. NO interpretes cartas aisladas. Cada dupla es una unidad indivisible.
 3. NO repitas la lectura anterior.
 4. Conecta tu respuesta explicitamente con la nueva pregunta del usuario.
-5. Maximo 2 parrafos. NO asteriscos. Solo HTML basico.`;
+5. Maximo 2 parrafos. NO asteriscos. Solo HTML basico.
+6. NO escribas tu proceso de pensamiento. Responde SOLO con el HTML.`;
 
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
