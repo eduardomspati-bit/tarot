@@ -49,7 +49,9 @@ const Usuario = mongoose.models.Usuario || mongoose.model('Usuario', UsuarioSche
 // ==========================================
 // 3. CONFIGURACION GROQ
 // ==========================================
-const MODEL_NAME = process.env.MODEL_NAME || 'openai/gpt-oss-20b';
+// qwen/qwen3.6-27b: modelo estable, no genera thinking tags, buen precio
+// openai/gpt-oss-20b: alternativa production pero genera reasoning tags
+const MODEL_NAME = process.env.MODEL_NAME || 'qwen/qwen3.6-27b';
 const API_KEY = process.env.GROQ_API_KEY || process.env.API_KEY;
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
 
@@ -81,12 +83,45 @@ function verificarAdmin(req, res, next) {
 // ==========================================
 function limpiarRazonamiento(texto) {
     if (!texto) return '';
+
+    // Guardar original por si acaso
+    const original = texto;
+
+    // Borrar bloques de razonamiento de modelos reasoning
     texto = texto.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '');
     texto = texto.replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '');
+    texto = texto.replace(/<think>[\s\S]*?<\/think>/gi, '');
+
+    // Borrar markdown de codigo
     texto = texto.replace(/```html/gi, '').replace(/```/g, '');
-    const idx = texto.indexOf('<div');
-    if (idx !== -1) texto = texto.substring(idx);
-    return texto.trim();
+
+    // Limpiar espacios
+    const limpio = texto.trim();
+
+    // Si quedo vacio despues de limpiar pero el original tenia texto,
+    // puede ser que el modelo devolvio SOLO thinking tags.
+    // En ese caso, intentar extraer el contenido util del thinking tag
+    if (!limpio && original.trim()) {
+        // Buscar si hay contenido fuera de thinking tags
+        const fueraThinking = original.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '')
+                                      .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '')
+                                      .replace(/<think>[\s\S]*?<\/think>/gi, '')
+                                      .trim();
+        if (fueraThinking) {
+            return fueraThinking;
+        }
+        // Si todo era thinking, devolver el original (mejor que nada)
+        console.log('  ADVERTENCIA: modelo devolvio solo thinking tags');
+        return original.trim();
+    }
+
+    // Buscar primer <div para cortar intro basura
+    const idx = limpio.indexOf('<div');
+    if (idx !== -1) {
+        return limpio.substring(idx);
+    }
+
+    return limpio;
 }
 
 // ==========================================
@@ -123,16 +158,17 @@ app.post('/tirada', async (req, res) => {
         // ========== MODO GRATIS ==========
         if (esModoGratis) {
             promptSistema = `Eres Morgana, experta lectora de Tarot. Tono mistico, directo y predictivo.
-ESTRUCTURA OBLIGATORIA - Solo 2 secciones HTML:
+ESTRUCTURA OBLIGATORIA - Devuelve SOLO 2 secciones HTML:
 1. CONCLUSION (responde DIRECTAMENTE a la pregunta del consultante, basada en la Dupla 1)
 2. PREDICCION (sobre el futuro, basada en la Dupla 2)
 
 REGLAS ESTRICTAS:
-- Maximo 120 palabras en total.
+- Maximo 150 palabras en total.
 - NO saludos. NO introducciones. NO "las cartas dicen" generico.
 - Responde DIRECTAMENTE a la pregunta del consultante.
 - Cada dupla se lee como UNIDAD INDIVISIBLE (no carta por carta).
-- Devuelve HTML simple con class reading-section.`;
+- Devuelve HTML simple con class reading-section.
+- NO uses markdown, NO uses asteriscos.`;
 
             promptUsuario = `PREGUNTA DEL CONSULTANTE: "${preguntaLimpia || 'Consulta general'}"
 
@@ -151,7 +187,8 @@ ESTRUCTURA DE LECTURA POR DUPLAS (OBLIGATORIA):
 NO interpretes cartas aisladas. Cada dupla tiene un significado UNICO como conjunto.
 Tono neutro, analitico. PROHIBIDO relacionar Dupla 1 con Dupla 2.
 NO uses marcadores de posicion como [texto].
-Devuelve HTML con class reading-section.`;
+Devuelve HTML con class reading-section.
+NO uses markdown, NO uses asteriscos.`;
 
             if (esPreguntaEspecifica) {
                 promptUsuario = `PREGUNTA ESPECIFICA DEL CONSULTANTE: "${preguntaLimpia}"
@@ -186,7 +223,8 @@ ESTRUCTURA DE LECTURA POR DUPLAS (OBLIGATORIA):
 NO interpretes cartas aisladas. Cada dupla tiene un significado UNICO como conjunto.
 PROHIBIDO marcadores de posicion como [texto].
 NO uses asteriscos, guiones ni vinetas.
-Devuelve HTML con class reading-section.`;
+Devuelve HTML con class reading-section.
+NO uses markdown.`;
 
             if (esPreguntaEspecifica) {
                 promptUsuario = `PREGUNTA ESPECIFICA DEL CONSULTANTE: "${preguntaLimpia}"
@@ -226,7 +264,7 @@ REGLA: NO interpretes carta por carta. Cada dupla tiene un significado unico com
                     { role: 'user', content: promptUsuario }
                 ],
                 temperature: esModoGratis ? 0.8 : (estilo === 'manual' ? 0.2 : 0.7),
-                max_tokens: esModoGratis ? 300 : 1500
+                max_tokens: esModoGratis ? 500 : 1500
             })
         });
 
@@ -245,7 +283,12 @@ REGLA: NO interpretes carta por carta. Cada dupla tiene un significado unico com
             });
         }
 
-        let text = limpiarRazonamiento(data.choices[0].message?.content || '');
+        const rawContent = data.choices[0].message?.content || '';
+        console.log('Raw content length:', rawContent.length);
+        console.log('Raw content preview:', rawContent.substring(0, 200));
+
+        let text = limpiarRazonamiento(rawContent);
+        console.log('Limpio length:', text.length);
 
         if (!text) {
             console.warn('Texto vacio despues de limpiar, usando fallback');
