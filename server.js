@@ -49,14 +49,14 @@ const Usuario = mongoose.models.Usuario || mongoose.model('Usuario', UsuarioSche
 // ==========================================
 // 3. CONFIGURACION GROQ
 // ==========================================
-const MODEL_NAME = process.env.MODEL_NAME || 'qwen/qwen3.6-27b';
+// mistral-saba-24b: modelo de produccion, NO genera thinking tags, responde directo y completo
+const MODEL_NAME = process.env.MODEL_NAME || 'mistral-saba-24b';
 const API_KEY = process.env.GROQ_API_KEY || process.env.API_KEY;
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
 
 console.log('CONFIG SERVIDOR:');
 console.log('  MODEL_NAME:', MODEL_NAME);
 console.log('  API_KEY existe:', !!API_KEY);
-console.log('  API_KEY primeros 10:', API_KEY ? API_KEY.substring(0, 10) + '...' : 'NO');
 console.log('  ADMIN_TOKEN existe:', !!ADMIN_TOKEN);
 
 // ==========================================
@@ -64,80 +64,13 @@ console.log('  ADMIN_TOKEN existe:', !!ADMIN_TOKEN);
 // ==========================================
 function verificarAdmin(req, res, next) {
     const token = req.headers['x-admin-token'];
-
     if (!ADMIN_TOKEN) {
-        console.error("ALERTA: ADMIN_TOKEN no definido.");
-        return res.status(500).json({ error: 'Configuracion de servidor incompleta.' });
+        return res.status(500).json({ error: 'Configuracion incompleta.' });
     }
-
     if (!token || token !== ADMIN_TOKEN) {
-        return res.status(403).json({ error: 'Acceso denegado. Token invalido.' });
+        return res.status(403).json({ error: 'Acceso denegado.' });
     }
     next();
-}
-
-// ==========================================
-// FUNCION: LIMPIAR RESPUESTA
-// ==========================================
-function limpiarRespuesta(texto) {
-    if (!texto) return '';
-
-    // Quitar tags de thinking
-    const tags = [['<think>', '</think>'], ['<thinking>', '</thinking>'], ['<reasoning>', '</reasoning>']];
-    for (const [a, c] of tags) {
-        while (true) {
-            const ia = texto.indexOf(a);
-            if (ia === -1) break;
-            const ic = texto.indexOf(c, ia);
-            if (ic === -1) {
-                texto = texto.substring(0, ia).trim();
-                break;
-            }
-            texto = (texto.substring(0, ia) + texto.substring(ic + c.length)).trim();
-        }
-    }
-
-    // Quitar markdown
-    texto = texto.replace(/```html/gi, '').replace(/```/g, '');
-
-    // Quitar thinking process en texto plano
-    const markers = [
-        "Here's a thinking process:",
-        "Thinking Process:",
-        "Thinking:",
-        "Razonamiento:",
-        "Proceso de pensamiento:",
-        "Step-by-step thinking:",
-        "Let me think through this:"
-    ];
-
-    for (const marker of markers) {
-        const idx = texto.indexOf(marker);
-        if (idx !== -1) {
-            const despues = texto.substring(idx + marker.length);
-            const idxDiv = despues.indexOf('<div');
-            const idxConclusion = despues.search(/Conclusi|Predicci|Dupla|Presente|Futuro|El camino|Debes|La situaci|Las cartas/i);
-
-            let corte = -1;
-            if (idxDiv !== -1) corte = idx + marker.length + idxDiv;
-            else if (idxConclusion !== -1 && idxConclusion > 50) corte = idx + marker.length + idxConclusion;
-
-            if (corte !== -1) {
-                const util = texto.substring(corte).trim();
-                if (util.length > 30) {
-                    texto = util;
-                    break;
-                }
-            }
-            texto = texto.substring(0, idx).trim();
-        }
-    }
-
-    // Buscar primer <div
-    const idxDiv = texto.indexOf('<div');
-    if (idxDiv !== -1) return texto.substring(idxDiv);
-
-    return texto.trim();
 }
 
 // ==========================================
@@ -166,61 +99,79 @@ app.post('/tirada', async (req, res) => {
         const esPreguntaEspecifica = (tema === 'Pregunta Especifica' || tema === 'Pregunta Especifica') && preguntaLimpia.length > 0;
         const esModoGratis = modo === 'gratis';
 
-        // ========== CONSTRUIR PROMPT ULTRA SIMPLE ==========
-        // La clave: menos texto en el prompt = menos razonamiento del modelo
         let mensaje = '';
 
         if (esModoGratis) {
-            mensaje = `Eres Morgana, lectora de Tarot. Responde con 2 divs HTML con class reading-section.
+            mensaje = `Eres Morgana, experta lectora de Tarot. Tono mistico, directo y predictivo.
 
-Pregunta: ${preguntaLimpia || 'Consulta general'}
-Cartas: ${a} y ${b} (presente), ${c} y ${d} (futuro).
+Responde con EXACTAMENTE 2 secciones HTML, cada una con class="reading-section".
+Cada seccion debe tener minimo 3 oraciones completas.
+NO saludes. NO uses asteriscos ni markdown.
 
-Responde directo en espanol. Maximo 150 palabras.`;
+Pregunta: "${preguntaLimpia || 'Consulta general'}"
+Dupla 1 (Presente): ${a} y ${b}
+Dupla 2 (Futuro): ${c} y ${d}
+
+Responde en espanol. Seccion 1 = CONCLUSION sobre la pregunta. Seccion 2 = PREDICCION.`;
+
         } else if (estilo === 'manual') {
             if (esPreguntaEspecifica) {
-                mensaje = `Actua como diccionario tecnico de Tarot. Tono neutro.
+                mensaje = `Actua como diccionario tecnico de Tarot. Tono neutro y analitico.
 
-Pregunta: ${preguntaLimpia}
-Cartas presente: ${a} y ${b} (significado conjunto).
-Cartas futuro: ${c} y ${d} (significado conjunto).
+Responde con EXACTAMENTE 2 secciones HTML, cada una con class="reading-section".
+Cada seccion debe tener minimo 3 oraciones completas.
+NO uses asteriscos ni markdown.
 
-Responde con HTML class reading-section. Solo significados conjuntos, no carta por carta.`;
+Pregunta: "${preguntaLimpia}"
+Dupla 1 (Presente): ${a} y ${b} -> Significado conjunto sobre la pregunta.
+Dupla 2 (Futuro): ${c} y ${d} -> Significado conjunto sobre la pregunta.
+
+Solo interpretaciones conjuntas de cada dupla. No carta por carta.`;
             } else {
                 mensaje = `Diccionario tecnico de Tarot. Tono neutro.
 
-Tema: ${tema}
-Cartas presente: ${a} y ${b} (significado conjunto).
-Cartas futuro: ${c} y ${d} (significado conjunto).
+Responde con EXACTAMENTE 2 secciones HTML, cada una con class="reading-section".
+Cada seccion debe tener minimo 3 oraciones completas.
+NO uses asteriscos ni markdown.
 
-HTML class reading-section. Solo significados conjuntos.`;
+Tema: ${tema}
+Dupla 1 (Presente): ${a} y ${b} -> Significado conjunto.
+Dupla 2 (Futuro): ${c} y ${d} -> Significado conjunto.
+
+Solo interpretaciones conjuntas.`;
             }
+
         } else {
             const personalidad = (estilo === 'morgana' || estilo === 'magico')
-                ? 'Eres Morgana, lectora de Tarot. Tono mistico, directo y predictivo.'
-                : 'Eres terapeuta de Tarot Evolutivo. Tono reflexivo y empatico.';
+                ? 'Eres Morgana, lectora de Tarot. Tono mistico, directo y predictivo. Respuestas concretas, no genericas.'
+                : 'Eres terapeuta de Tarot Evolutivo. Tono reflexivo y empatico. Interpretaciones profundas pero concretas.';
 
             if (esPreguntaEspecifica) {
                 mensaje = `${personalidad}
 
-Pregunta: ${preguntaLimpia}
-Cartas presente: ${a} y ${b} (interpretacion conjunta sobre la pregunta).
-Cartas futuro: ${c} y ${d} (interpretacion conjunta sobre la pregunta).
+Responde con EXACTAMENTE 2 secciones HTML, cada una con class="reading-section".
+Cada seccion debe tener minimo 3 oraciones completas.
+NO uses asteriscos ni markdown.
 
-Responde directo a la pregunta. HTML class reading-section. No carta por carta.`;
+Pregunta: "${preguntaLimpia}"
+Dupla 1 (Presente): ${a} y ${b} -> Interpretacion conjunta sobre la pregunta.
+Dupla 2 (Futuro): ${c} y ${d} -> Interpretacion conjunta sobre la pregunta.
+
+Responde DIRECTAMENTE a la pregunta. Conecta cada dupla con la duda especifica.`;
             } else {
                 mensaje = `${personalidad}
 
-Tema: ${tema}
-Cartas presente: ${a} y ${b} (interpretacion conjunta).
-Cartas futuro: ${c} y ${d} (interpretacion conjunta).
+Responde con EXACTAMENTE 2 secciones HTML, cada una con class="reading-section".
+Cada seccion debe tener minimo 3 oraciones completas.
+NO uses asteriscos ni markdown.
 
-HTML class reading-section. No carta por carta.`;
+Tema: ${tema}
+Dupla 1 (Presente): ${a} y ${b} -> Interpretacion conjunta.
+Dupla 2 (Futuro): ${c} y ${d} -> Interpretacion conjunta.`;
             }
         }
 
         console.log('Llamando a Groq... Modelo:', MODEL_NAME);
-        console.log('Prompt length:', mensaje.length);
 
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
@@ -231,15 +182,15 @@ HTML class reading-section. No carta por carta.`;
             body: JSON.stringify({
                 model: MODEL_NAME,
                 messages: [
+                    { role: 'system', content: 'Eres un experto lector de Tarot. Respondes siempre en espanol con HTML completo y bien desarrollado.' },
                     { role: 'user', content: mensaje }
                 ],
-                temperature: 0.3,
-                max_tokens: 800
+                temperature: 0.7,
+                max_tokens: 1500
             })
         });
 
         const data = await response.json();
-
         console.log('Status Groq:', response.status);
         if (data.error) console.log('Error Groq:', data.error.message);
 
@@ -250,19 +201,16 @@ HTML class reading-section. No carta por carta.`;
             });
         }
 
-        const raw = data.choices[0].message?.content || '';
-        console.log('Raw length:', raw.length);
-        console.log('Raw preview:', raw.substring(0, 150).replace(/\n/g, ' '));
-
-        let text = limpiarRespuesta(raw);
-        console.log('Limpio length:', text.length);
-        console.log('Limpio preview:', text.substring(0, 150).replace(/\n/g, ' '));
+        const text = data.choices[0].message?.content || '';
+        console.log('Respuesta length:', text.length);
+        console.log('Respuesta preview:', text.substring(0, 200).replace(/\n/g, ' '));
 
         if (!text || text.length < 30) {
             console.warn('Fallback activado');
-            text = esModoGratis 
-                ? `<div class="reading-section"><h3>Conclusion</h3><p>${a} y ${b} indican que la situacion actual requiere atencion.</p></div><div class="reading-section"><h3>Prediccion</h3><p>${c} y ${d} revelan un cambio en el horizonte.</p></div>`
-                : `<div class="reading-section"><h3>Dupla 1: Presente</h3><p>${a} y ${b} revelan la energia actual.</p></div><div class="reading-section"><h3>Dupla 2: Futuro</h3><p>${c} y ${d} indican la evolucion.</p></div>`;
+            const fallback = esModoGratis 
+                ? `<div class="reading-section"><h3>Conclusion</h3><p>La dupla ${a} y ${b} indica que la situacion actual requiere atencion. Hay energia presente que pide ser comprendida en profundidad antes de actuar.</p></div><div class="reading-section"><h3>Prediccion</h3><p>La dupla ${c} y ${d} revela un cambio significativo en el horizonte. La evolucion traera nuevas perspectivas y oportunidades de crecimiento.</p></div>`
+                : `<div class="reading-section"><h3>Dupla 1: Presente</h3><p>La combinacion de ${a} y ${b} revela una energia actual intensa que pide ser comprendida en su conjunto. Hay dinamicas ocultas que influyen en la situacion.</p></div><div class="reading-section"><h3>Dupla 2: Futuro</h3><p>La dupla ${c} y ${d} indica una evolucion importante que transformara la situacion de manera significativa.</p></div>`;
+            return res.json({ lectura: fallback });
         }
 
         return res.json({ lectura: text });
@@ -299,10 +247,13 @@ app.post('/repregunta', async (req, res) => {
 
         const mensaje = `${personalidad}
 
+Responde con HTML simple. Minimo 3 oraciones completas.
+NO uses asteriscos ni markdown.
+
 Cartas de la tirada: ${a} y ${b} (presente), ${c} y ${d} (futuro).
 Nueva pregunta: ${repregunta.trim().slice(0, 300)}
 
-Responde directo. Maximo 2 parrafos. HTML simple.`;
+Responde directo a la pregunta.`;
 
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
@@ -312,9 +263,12 @@ Responde directo. Maximo 2 parrafos. HTML simple.`;
             },
             body: JSON.stringify({
                 model: MODEL_NAME,
-                messages: [{ role: 'user', content: mensaje }],
-                temperature: 0.3,
-                max_tokens: 600
+                messages: [
+                    { role: 'system', content: 'Eres un experto lector de Tarot. Respondes siempre en espanol con HTML completo.' },
+                    { role: 'user', content: mensaje }
+                ],
+                temperature: 0.7,
+                max_tokens: 800
             })
         });
 
@@ -324,9 +278,9 @@ Responde directo. Maximo 2 parrafos. HTML simple.`;
             return res.status(500).json({ error: 'Error en la API de IA' });
         }
 
-        let respuesta = limpiarRespuesta(data.choices[0].message?.content || '');
+        let respuesta = data.choices[0].message?.content || '';
         if (!respuesta || respuesta.length < 20) {
-            respuesta = '<p>Las cartas sugieren reflexionar sobre este aspecto.</p>';
+            respuesta = '<p>Las cartas sugieren reflexionar profundamente sobre este aspecto antes de tomar una decision.</p>';
         }
 
         return res.json({ respuesta });
