@@ -47,22 +47,16 @@ const UsuarioSchema = new mongoose.Schema({
 const Usuario = mongoose.models.Usuario || mongoose.model('Usuario', UsuarioSchema);
 
 // ==========================================
-// 3. CONFIGURACION GEMINI
+// 3. CONFIGURACION GROQ
 // ==========================================
-// Las keys nuevas de Gemini empiezan con AQ... (Authentication keys)
-// Las viejas AIza... seran rechazadas en septiembre 2026
-// Obtener API key gratis en: https://aistudio.google.com/app/apikey
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.GROQ_API_KEY;
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+const MODEL_NAME = process.env.MODEL_NAME || 'qwen/qwen3.6-27b';
+const API_KEY = process.env.GROQ_API_KEY || process.env.API_KEY;
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
 
 console.log('CONFIG SERVIDOR:');
-console.log('  IA: Google Gemini');
-console.log('  Modelo:', GEMINI_MODEL);
-console.log('  API_KEY existe:', !!GEMINI_API_KEY);
-if (GEMINI_API_KEY) {
-    console.log('  API_KEY formato:', GEMINI_API_KEY.substring(0, 5) + '...');
-}
+console.log('  MODEL_NAME:', MODEL_NAME);
+console.log('  API_KEY existe:', !!API_KEY);
+console.log('  API_KEY primeros 10:', API_KEY ? API_KEY.substring(0, 10) + '...' : 'NO');
 console.log('  ADMIN_TOKEN existe:', !!ADMIN_TOKEN);
 
 // ==========================================
@@ -83,55 +77,67 @@ function verificarAdmin(req, res, next) {
 }
 
 // ==========================================
-// FUNCION: LLAMAR A GEMINI
+// FUNCION: LIMPIAR RESPUESTA
 // ==========================================
-// Usamos el endpoint nativo de Gemini con header x-goog-api-key
-// Este endpoint funciona tanto con keys AIza... como AQ...
-async function llamarGemini(systemPrompt, userPrompt) {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+function limpiarRespuesta(texto) {
+    if (!texto) return '';
 
-    const body = {
-        contents: [
-            {
-                role: 'user',
-                parts: [
-                    { text: systemPrompt + '\n\n' + userPrompt }
-                ]
+    // Quitar tags de thinking
+    const tags = [['<think>', '</think>'], ['<thinking>', '</thinking>'], ['<reasoning>', '</reasoning>']];
+    for (const [a, c] of tags) {
+        while (true) {
+            const ia = texto.indexOf(a);
+            if (ia === -1) break;
+            const ic = texto.indexOf(c, ia);
+            if (ic === -1) {
+                texto = texto.substring(0, ia).trim();
+                break;
             }
-        ],
-        generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 1500,
-            topP: 0.95
+            texto = (texto.substring(0, ia) + texto.substring(ic + c.length)).trim();
         }
-    };
-
-    const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': GEMINI_API_KEY
-        },
-        body: JSON.stringify(body)
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-        console.error('Gemini HTTP error:', response.status, JSON.stringify(data));
-        throw new Error(`Gemini HTTP ${response.status}: ${data.error?.message || JSON.stringify(data)}`);
     }
 
-    if (data.error) {
-        throw new Error(`Gemini error: ${data.error.message || JSON.stringify(data.error)}`);
+    // Quitar markdown
+    texto = texto.replace(/```html/gi, '').replace(/```/g, '');
+
+    // Quitar thinking process en texto plano
+    const markers = [
+        "Here's a thinking process:",
+        "Thinking Process:",
+        "Thinking:",
+        "Razonamiento:",
+        "Proceso de pensamiento:",
+        "Step-by-step thinking:",
+        "Let me think through this:"
+    ];
+
+    for (const marker of markers) {
+        const idx = texto.indexOf(marker);
+        if (idx !== -1) {
+            const despues = texto.substring(idx + marker.length);
+            const idxDiv = despues.indexOf('<div');
+            const idxConclusion = despues.search(/Conclusi|Predicci|Dupla|Presente|Futuro|El camino|Debes|La situaci|Las cartas/i);
+
+            let corte = -1;
+            if (idxDiv !== -1) corte = idx + marker.length + idxDiv;
+            else if (idxConclusion !== -1 && idxConclusion > 50) corte = idx + marker.length + idxConclusion;
+
+            if (corte !== -1) {
+                const util = texto.substring(corte).trim();
+                if (util.length > 30) {
+                    texto = util;
+                    break;
+                }
+            }
+            texto = texto.substring(0, idx).trim();
+        }
     }
 
-    if (!data.candidates || data.candidates.length === 0) {
-        throw new Error('Gemini: Sin candidates en la respuesta');
-    }
+    // Buscar primer <div
+    const idxDiv = texto.indexOf('<div');
+    if (idxDiv !== -1) return texto.substring(idxDiv);
 
-    const texto = data.candidates[0].content?.parts?.[0]?.text || '';
-    return texto;
+    return texto.trim();
 }
 
 // ==========================================
@@ -148,11 +154,11 @@ app.post('/tirada', async (req, res) => {
     }
 
     if (!a || !b || !c || !d) {
-        return res.status(400).json({ error: 'Faltan cartas. Envia a,b,c,d o cartas[].' });
+        return res.status(400).json({ error: 'Faltan cartas.' });
     }
 
-    if (!GEMINI_API_KEY) {
-        return res.status(500).json({ error: 'API Key de Gemini no configurada.' });
+    if (!API_KEY) {
+        return res.status(500).json({ error: 'API Key no configurada.' });
     }
 
     try {
@@ -160,100 +166,110 @@ app.post('/tirada', async (req, res) => {
         const esPreguntaEspecifica = (tema === 'Pregunta Especifica' || tema === 'Pregunta Especifica') && preguntaLimpia.length > 0;
         const esModoGratis = modo === 'gratis';
 
-        let systemPrompt = '';
-        let userPrompt = '';
+        // ========== CONSTRUIR PROMPT ULTRA SIMPLE ==========
+        // La clave: menos texto en el prompt = menos razonamiento del modelo
+        let mensaje = '';
 
-        // ========== MODO GRATIS ==========
         if (esModoGratis) {
-            systemPrompt = `Eres Morgana, experta lectora de Tarot. Tono mistico, directo y predictivo.
-Responde SOLO con 2 secciones HTML. Nada mas.
-NO saludes. NO introducciones.
-Cada dupla se lee como UNIDAD INDIVISIBLE (no carta por carta).
-Devuelve HTML con class="reading-section".
-NO uses markdown, NO uses asteriscos.`;
+            mensaje = `Eres Morgana, lectora de Tarot. Responde con 2 divs HTML con class reading-section.
 
-            userPrompt = `PREGUNTA: "${preguntaLimpia || 'Consulta general'}"
+Pregunta: ${preguntaLimpia || 'Consulta general'}
+Cartas: ${a} y ${b} (presente), ${c} y ${d} (futuro).
 
-Dupla 1 (Presente): ${a} y ${b}
-Dupla 2 (Futuro): ${c} y ${d}
-
-Responde en espanol con HTML. Maximo 150 palabras.`;
-
-        // ========== MODO MANUAL ==========
+Responde directo en espanol. Maximo 150 palabras.`;
         } else if (estilo === 'manual') {
-            systemPrompt = `Actua como un diccionario tecnico de Tarot.
-Interpreta por DUPLAS, nunca carta por carta.
-Devuelve SOLO HTML con class="reading-section".
-Tono neutro, analitico.`;
-
             if (esPreguntaEspecifica) {
-                userPrompt = `PREGUNTA: "${preguntaLimpia}"
+                mensaje = `Actua como diccionario tecnico de Tarot. Tono neutro.
 
-Dupla 1 (Presente): ${a} y ${b} -> Significado conjunto sobre la situacion actual RELACIONADA CON LA PREGUNTA.
-Dupla 2 (Futuro): ${c} y ${d} -> Significado conjunto sobre la evolucion RELACIONADA CON LA PREGUNTA.
+Pregunta: ${preguntaLimpia}
+Cartas presente: ${a} y ${b} (significado conjunto).
+Cartas futuro: ${c} y ${d} (significado conjunto).
 
-Responde DIRECTAMENTE a la pregunta. Solo HTML.`;
+Responde con HTML class reading-section. Solo significados conjuntos, no carta por carta.`;
             } else {
-                userPrompt = `Tema: ${tema}
+                mensaje = `Diccionario tecnico de Tarot. Tono neutro.
 
-Dupla 1 (Presente): ${a} y ${b} -> Significado conjunto.
-Dupla 2 (Futuro): ${c} y ${d} -> Significado conjunto.
+Tema: ${tema}
+Cartas presente: ${a} y ${b} (significado conjunto).
+Cartas futuro: ${c} y ${d} (significado conjunto).
 
-Solo HTML. NO carta por carta.`;
+HTML class reading-section. Solo significados conjuntos.`;
             }
-
-        // ========== MODO NORMAL ==========
         } else {
-            const instruccionesPersonalidad = (estilo === 'morgana' || estilo === 'magico')
-                ? 'Eres Morgana, lectora de Tarot. Tono mistico, directo y predictivo. Respuestas concretas, no genericas.'
-                : 'Eres terapeuta de Tarot Evolutivo. Tono reflexivo y empatico. Interpretaciones profundas pero concretas.';
-
-            systemPrompt = `${instruccionesPersonalidad}
-ESTRUCTURA POR DUPLAS (OBLIGATORIA):
-- Dupla 1 (${a} + ${b}) = interpretacion conjunta del PRESENTE.
-- Dupla 2 (${c} + ${d}) = interpretacion conjunta del FUTURO.
-NO cartas aisladas. Cada dupla es UNICA.
-Devuelve SOLO HTML con class="reading-section".
-NO uses asteriscos, guiones ni vinetas.`;
+            const personalidad = (estilo === 'morgana' || estilo === 'magico')
+                ? 'Eres Morgana, lectora de Tarot. Tono mistico, directo y predictivo.'
+                : 'Eres terapeuta de Tarot Evolutivo. Tono reflexivo y empatico.';
 
             if (esPreguntaEspecifica) {
-                userPrompt = `PREGUNTA: "${preguntaLimpia}"
+                mensaje = `${personalidad}
 
-Dupla 1 (Presente): ${a} y ${b} -> Mensaje conjunto sobre la situacion ACTUAL en relacion a la pregunta.
-Dupla 2 (Futuro): ${c} y ${d} -> Mensaje conjunto sobre la EVOLUCION en relacion a la pregunta.
+Pregunta: ${preguntaLimpia}
+Cartas presente: ${a} y ${b} (interpretacion conjunta sobre la pregunta).
+Cartas futuro: ${c} y ${d} (interpretacion conjunta sobre la pregunta).
 
-Responde DIRECTAMENTE a la pregunta. Conecta cada dupla con la duda especifica. Solo HTML.`;
+Responde directo a la pregunta. HTML class reading-section. No carta por carta.`;
             } else {
-                userPrompt = `Tema: ${tema}
+                mensaje = `${personalidad}
 
-Dupla 1 (Presente): ${a} y ${b} -> Interpretacion conjunta de la situacion actual.
-Dupla 2 (Futuro): ${c} y ${d} -> Interpretacion conjunta de la evolucion.
+Tema: ${tema}
+Cartas presente: ${a} y ${b} (interpretacion conjunta).
+Cartas futuro: ${c} y ${d} (interpretacion conjunta).
 
-Solo HTML. NO carta por carta.`;
+HTML class reading-section. No carta por carta.`;
             }
         }
 
-        console.log('Llamando a Gemini... Modelo:', GEMINI_MODEL);
+        console.log('Llamando a Groq... Modelo:', MODEL_NAME);
+        console.log('Prompt length:', mensaje.length);
 
-        const text = await llamarGemini(systemPrompt, userPrompt);
+        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${API_KEY}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: MODEL_NAME,
+                messages: [
+                    { role: 'user', content: mensaje }
+                ],
+                temperature: 0.3,
+                max_tokens: 800
+            })
+        });
 
-        console.log('Respuesta Gemini length:', text.length);
-        console.log('Respuesta preview:', text.substring(0, 200).replace(/\n/g, ' '));
+        const data = await response.json();
+
+        console.log('Status Groq:', response.status);
+        if (data.error) console.log('Error Groq:', data.error.message);
+
+        if (!response.ok || !data.choices || data.choices.length === 0) {
+            return res.status(500).json({
+                error: 'Error del proveedor de IA.',
+                detalle: data.error?.message || `HTTP ${response.status}`
+            });
+        }
+
+        const raw = data.choices[0].message?.content || '';
+        console.log('Raw length:', raw.length);
+        console.log('Raw preview:', raw.substring(0, 150).replace(/\n/g, ' '));
+
+        let text = limpiarRespuesta(raw);
+        console.log('Limpio length:', text.length);
+        console.log('Limpio preview:', text.substring(0, 150).replace(/\n/g, ' '));
 
         if (!text || text.length < 30) {
-            console.warn('Respuesta vacia o muy corta, usando fallback');
-            const fallback = esModoGratis 
-                ? `<div class="reading-section"><h3>Conclusion</h3><p>Las cartas ${a} y ${b} indican que la situacion actual requiere atencion.</p></div><div class="reading-section"><h3>Prediccion</h3><p>La Dupla ${c} y ${d} revela un cambio en el horizonte.</p></div>`
-                : `<div class="reading-section"><h3>Dupla 1: Presente (${a} + ${b})</h3><p>Estas dos cartas juntas revelan la energia actual.</p></div><div class="reading-section"><h3>Dupla 2: Futuro (${c} + ${d})</h3><p>Estas dos cartas juntas indican la evolucion que se avecina.</p></div>`;
-            return res.json({ lectura: fallback });
+            console.warn('Fallback activado');
+            text = esModoGratis 
+                ? `<div class="reading-section"><h3>Conclusion</h3><p>${a} y ${b} indican que la situacion actual requiere atencion.</p></div><div class="reading-section"><h3>Prediccion</h3><p>${c} y ${d} revelan un cambio en el horizonte.</p></div>`
+                : `<div class="reading-section"><h3>Dupla 1: Presente</h3><p>${a} y ${b} revelan la energia actual.</p></div><div class="reading-section"><h3>Dupla 2: Futuro</h3><p>${c} y ${d} indican la evolucion.</p></div>`;
         }
 
-        console.log('Respuesta enviada al cliente (', text.length, 'chars)');
         return res.json({ lectura: text });
 
     } catch (error) {
-        console.error('ERROR en /tirada:', error.message);
-        return res.status(500).json({ error: 'Error interno en el servidor', detalles: error.message });
+        console.error('ERROR:', error.message);
+        return res.status(500).json({ error: 'Error interno', detalles: error.message });
     }
 });
 
@@ -267,37 +283,57 @@ app.post('/repregunta', async (req, res) => {
         return res.status(400).json({ error: 'Falta la repregunta.' });
     }
 
-    if (!GEMINI_API_KEY) {
+    if (!API_KEY) {
         return res.status(500).json({ error: 'API Key no configurada.' });
     }
 
     try {
-        let personalidad = estilo === 'manual' ? 'Oraculo analitico de Tarot. Tono claro.'
-            : (estilo === 'morgana' || estilo === 'magico') ? 'Morgana, lectora mistica. Tono directo.'
-            : 'Terapeuta de Tarot Evolutivo. Tono empatico.';
+        const personalidad = estilo === 'manual' ? 'Oraculo analitico de Tarot.'
+            : (estilo === 'morgana' || estilo === 'magico') ? 'Morgana, lectora mistica.'
+            : 'Terapeuta de Tarot Evolutivo.';
 
         const a = cartas?.a || '';
         const b = cartas?.b || '';
         const c = cartas?.c || '';
         const d = cartas?.d || '';
 
-        const systemPrompt = `${personalidad}
-NUEVA PREGUNTA sobre la misma tirada.
-Cartas (por duplas): Dupla 1: ${a} y ${b}. Dupla 2: ${c} y ${d}.
-Responde DIRECTAMENTE a la nueva pregunta. Maximo 2 parrafos.
-Solo HTML basico. NO asteriscos.`;
+        const mensaje = `${personalidad}
 
-        const text = await llamarGemini(systemPrompt, repregunta.trim().slice(0, 300));
+Cartas de la tirada: ${a} y ${b} (presente), ${c} y ${d} (futuro).
+Nueva pregunta: ${repregunta.trim().slice(0, 300)}
 
-        if (!text || text.length < 20) {
-            return res.json({ respuesta: '<p>Las cartas sugieren reflexionar con calma sobre este aspecto.</p>' });
+Responde directo. Maximo 2 parrafos. HTML simple.`;
+
+        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${API_KEY}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: MODEL_NAME,
+                messages: [{ role: 'user', content: mensaje }],
+                temperature: 0.3,
+                max_tokens: 600
+            })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok || !data.choices || data.choices.length === 0) {
+            return res.status(500).json({ error: 'Error en la API de IA' });
         }
 
-        return res.json({ respuesta: text });
+        let respuesta = limpiarRespuesta(data.choices[0].message?.content || '');
+        if (!respuesta || respuesta.length < 20) {
+            respuesta = '<p>Las cartas sugieren reflexionar sobre este aspecto.</p>';
+        }
+
+        return res.json({ respuesta });
 
     } catch (error) {
-        console.error('Error en /repregunta:', error);
-        return res.status(500).json({ error: 'La conexion con la repregunta fallo.' });
+        console.error('Error repregunta:', error);
+        return res.status(500).json({ error: 'Error en repregunta.' });
     }
 });
 
