@@ -10,6 +10,7 @@ const corsOptions = {
         'https://tarotia-app-psi.github.io',
         'http://localhost:3000',
         'http://127.0.0.1:5500'
+        'https://tarot-ia.netlify.app', // 👈 ¡Nuevo dominio de Netlify agregado!
     ],
     methods: ['GET', 'POST', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'x-admin-token'],
