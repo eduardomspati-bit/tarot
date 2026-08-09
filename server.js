@@ -47,16 +47,18 @@ const UsuarioSchema = new mongoose.Schema({
 const Usuario = mongoose.models.Usuario || mongoose.model('Usuario', UsuarioSchema);
 
 // ==========================================
-// 3. CONFIGURACION GROQ
+// 3. CONFIGURACION GEMINI
 // ==========================================
-const MODEL_NAME = process.env.MODEL_NAME || 'qwen/qwen3.6-27b';
-const API_KEY = process.env.GROQ_API_KEY || process.env.API_KEY;
+// Obtener API key gratis en: https://aistudio.google.com/app/apikey
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.GROQ_API_KEY;
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
 
 console.log('CONFIG SERVIDOR:');
-console.log('  MODEL_NAME:', MODEL_NAME);
-console.log('  API_KEY existe:', !!API_KEY);
-console.log('  API_KEY primeros 10:', API_KEY ? API_KEY.substring(0, 10) + '...' : 'NO');
+console.log('  IA: Google Gemini');
+console.log('  Modelo:', GEMINI_MODEL);
+console.log('  API_KEY existe:', !!GEMINI_API_KEY);
+console.log('  API_KEY primeros 10:', GEMINI_API_KEY ? GEMINI_API_KEY.substring(0, 10) + '...' : 'NO');
 console.log('  ADMIN_TOKEN existe:', !!ADMIN_TOKEN);
 
 // ==========================================
@@ -77,136 +79,45 @@ function verificarAdmin(req, res, next) {
 }
 
 // ==========================================
-// FUNCION AUXILIAR: EXTRAER RESPUESTA REAL
+// FUNCION: LLAMAR A GEMINI
 // ==========================================
-// qwen genera thinking process antes de la respuesta. Esta funcion lo corta.
-function extraerRespuestaReal(texto) {
-    if (!texto) return '';
+async function llamarGemini(systemPrompt, userPrompt) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
 
-    let original = texto;
-
-    // ---------- PASO 1: Quitar tags XML de razonamiento ----------
-    const tags = [
-        ['<think>', '</think>'],
-        ['<thinking>', '</thinking>'],
-        ['<reasoning>', '</reasoning>']
-    ];
-
-    for (const [apertura, cierre] of tags) {
-        while (true) {
-            const idxApertura = original.indexOf(apertura);
-            if (idxApertura === -1) break;
-            const idxCierre = original.indexOf(cierre, idxApertura);
-            if (idxCierre === -1) {
-                // No hay cierre, cortar desde apertura hasta el final
-                original = original.substring(0, idxApertura).trim();
-                break;
+    const body = {
+        contents: [
+            {
+                role: 'user',
+                parts: [
+                    { text: systemPrompt + '\n\n' + userPrompt }
+                ]
             }
-            original = (original.substring(0, idxApertura) + original.substring(idxCierre + cierre.length)).trim();
+        ],
+        generationConfig: {
+            temperature: 0.7,
+            maxOutputTokens: 1500,
+            topP: 0.95
         }
+    };
+
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+    });
+
+    const data = await response.json();
+
+    if (data.error) {
+        throw new Error(`Gemini error: ${data.error.message || JSON.stringify(data.error)}`);
     }
 
-    // ---------- PASO 2: Quitar markdown de codigo ----------
-    original = original.replace(/```html/gi, '').replace(/```/g, '');
-
-    // ---------- PASO 3: Detectar thinking process en texto plano ----------
-    // Buscar marcadores de inicio de razonamiento
-    const thinkingMarkers = [
-        "Here's a thinking process:",
-        "Thinking Process:",
-        "Thinking:",
-        "Razonamiento:",
-        "Proceso de pensamiento:",
-        "Step-by-step thinking:",
-        "Let me think through this:"
-    ];
-
-    let textoLimpio = original;
-    let thinkingEncontrado = false;
-
-    for (const marker of thinkingMarkers) {
-        const idxMarker = textoLimpio.indexOf(marker);
-        if (idxMarker !== -1) {
-            thinkingEncontrado = true;
-            console.log('  Thinking detectado:', marker);
-
-            // Buscar si DESPUES del thinking hay una respuesta real util
-            const despuesMarker = textoLimpio.substring(idxMarker + marker.length);
-
-            // Estrategia A: Buscar <div despues del marker
-            const idxDiv = despuesMarker.indexOf('<div');
-            if (idxDiv !== -1) {
-                const parteUtil = despuesMarker.substring(idxDiv).trim();
-                if (parteUtil.length > 30) {
-                    console.log('  Respuesta real encontrada despues del thinking (HTML)');
-                    textoLimpio = parteUtil;
-                    break;
-                }
-            }
-
-            // Estrategia B: Buscar doble salto de linea que separe thinking de respuesta
-            const idxDobleSalto = despuesMarker.indexOf('\n\n');
-            if (idxDobleSalto !== -1 && idxDobleSalto > 100) {
-                const parteUtil = despuesMarker.substring(idxDobleSalto).trim();
-                if (parteUtil.length > 30 && !parteUtil.includes('Analyze') && !parteUtil.includes('Interpret')) {
-                    console.log('  Respuesta real encontrada despues del thinking (salto doble)');
-                    textoLimpio = parteUtil;
-                    break;
-                }
-            }
-
-            // Estrategia C: Buscar "Conclusion" o "Prediccion" o "Dupla" despues del marker
-            const palabrasClave = ['Conclusion', 'Prediccion', 'Dupla', 'Presente', 'Futuro', 'El camino', 'Debes', 'La situacion', 'Las cartas'];
-            for (const palabra of palabrasClave) {
-                const idxPalabra = despuesMarker.indexOf(palabra);
-                if (idxPalabra !== -1 && idxPalabra > 50) {
-                    const parteUtil = despuesMarker.substring(idxPalabra).trim();
-                    if (parteUtil.length > 30) {
-                        console.log('  Respuesta real encontrada despues del thinking (palabra clave:', palabra + ')');
-                        textoLimpio = parteUtil;
-                        break;
-                    }
-                }
-            }
-            if (textoLimpio !== original) break; // Ya encontramos respuesta
-
-            // Estrategia D: No hay respuesta util despues, cortar todo el thinking
-            console.log('  No se encontro respuesta util despues del thinking, cortando...');
-            textoLimpio = textoLimpio.substring(0, idxMarker).trim();
-        }
+    if (!data.candidates || data.candidates.length === 0) {
+        throw new Error('Gemini: Sin candidates en la respuesta');
     }
 
-    // ---------- PASO 4: Si no se encontro thinking pero el texto parece basura, filtrar ----------
-    if (!thinkingEncontrado) {
-        const lineas = textoLimpio.split('\n');
-        const resultado = [];
-        let enRespuesta = false;
-
-        for (const linea of lineas) {
-            const trim = linea.trim();
-            if (!trim) continue;
-
-            // Detectar inicio de respuesta real
-            if (trim.startsWith('<div') || trim.startsWith('<h3') || trim.startsWith('<p') ||
-                trim.startsWith('Conclusion') || trim.startsWith('Prediccion') ||
-                trim.startsWith('Dupla') || trim.startsWith('Debes') ||
-                trim.startsWith('El camino') || trim.startsWith('La situacion') ||
-                trim.startsWith('Las cartas') ||
-                (trim.length > 40 && !trim.match(/^\d+\./) && !trim.startsWith('-') && !trim.startsWith('*') && !trim.startsWith('**') && !trim.includes('Analyze') && !trim.includes('Interpret'))) {
-                enRespuesta = true;
-            }
-
-            if (enRespuesta) {
-                resultado.push(linea);
-            }
-        }
-
-        if (resultado.length > 0) {
-            textoLimpio = resultado.join('\n').trim();
-        }
-    }
-
-    return textoLimpio;
+    const texto = data.candidates[0].content?.parts?.[0]?.text || '';
+    return texto;
 }
 
 // ==========================================
@@ -223,13 +134,11 @@ app.post('/tirada', async (req, res) => {
     }
 
     if (!a || !b || !c || !d) {
-        console.log('Faltan cartas');
         return res.status(400).json({ error: 'Faltan cartas. Envia a,b,c,d o cartas[].' });
     }
 
-    if (!API_KEY) {
-        console.log('API Key no configurada');
-        return res.status(500).json({ error: 'API Key de Groq no configurada.' });
+    if (!GEMINI_API_KEY) {
+        return res.status(500).json({ error: 'API Key de Gemini no configurada.' });
     }
 
     try {
@@ -237,39 +146,41 @@ app.post('/tirada', async (req, res) => {
         const esPreguntaEspecifica = (tema === 'Pregunta Especifica' || tema === 'Pregunta Especifica') && preguntaLimpia.length > 0;
         const esModoGratis = modo === 'gratis';
 
-        let promptSistema = '';
-        let promptUsuario = '';
+        let systemPrompt = '';
+        let userPrompt = '';
 
         // ========== MODO GRATIS ==========
         if (esModoGratis) {
-            promptSistema = `Eres Morgana, lectora de Tarot. Tono mistico y directo.
+            systemPrompt = `Eres Morgana, experta lectora de Tarot. Tono mistico, directo y predictivo.
 Responde SOLO con 2 secciones HTML. Nada mas.
-NO saludes. NO expliques tu razonamiento.
-Cada dupla se lee como UNIDAD INDIVISIBLE.`;
+NO saludes. NO introducciones.
+Cada dupla se lee como UNIDAD INDIVISIBLE (no carta por carta).
+Devuelve HTML con class="reading-section".
+NO uses markdown, NO uses asteriscos.`;
 
-            promptUsuario = `PREGUNTA: "${preguntaLimpia || 'Consulta general'}"
+            userPrompt = `PREGUNTA: "${preguntaLimpia || 'Consulta general'}"
 
 Dupla 1 (Presente): ${a} y ${b}
 Dupla 2 (Futuro): ${c} y ${d}
 
-Responde en espanol con HTML usando class="reading-section". Maximo 150 palabras.`;
+Responde en espanol con HTML. Maximo 150 palabras.`;
 
         // ========== MODO MANUAL ==========
         } else if (estilo === 'manual') {
-            promptSistema = `Diccionario tecnico de Tarot. Tono neutro y analitico.
+            systemPrompt = `Actua como un diccionario tecnico de Tarot.
 Interpreta por DUPLAS, nunca carta por carta.
 Devuelve SOLO HTML con class="reading-section".
-NO expliques tu razonamiento.`;
+Tono neutro, analitico.`;
 
             if (esPreguntaEspecifica) {
-                promptUsuario = `PREGUNTA: "${preguntaLimpia}"
+                userPrompt = `PREGUNTA: "${preguntaLimpia}"
 
 Dupla 1 (Presente): ${a} y ${b} -> Significado conjunto sobre la situacion actual RELACIONADA CON LA PREGUNTA.
 Dupla 2 (Futuro): ${c} y ${d} -> Significado conjunto sobre la evolucion RELACIONADA CON LA PREGUNTA.
 
 Responde DIRECTAMENTE a la pregunta. Solo HTML.`;
             } else {
-                promptUsuario = `Tema: ${tema}
+                userPrompt = `Tema: ${tema}
 
 Dupla 1 (Presente): ${a} y ${b} -> Significado conjunto.
 Dupla 2 (Futuro): ${c} y ${d} -> Significado conjunto.
@@ -283,24 +194,23 @@ Solo HTML. NO carta por carta.`;
                 ? 'Eres Morgana, lectora de Tarot. Tono mistico, directo y predictivo. Respuestas concretas, no genericas.'
                 : 'Eres terapeuta de Tarot Evolutivo. Tono reflexivo y empatico. Interpretaciones profundas pero concretas.';
 
-            promptSistema = `${instruccionesPersonalidad}
+            systemPrompt = `${instruccionesPersonalidad}
 ESTRUCTURA POR DUPLAS (OBLIGATORIA):
 - Dupla 1 (${a} + ${b}) = interpretacion conjunta del PRESENTE.
 - Dupla 2 (${c} + ${d}) = interpretacion conjunta del FUTURO.
 NO cartas aisladas. Cada dupla es UNICA.
 Devuelve SOLO HTML con class="reading-section".
-NO uses asteriscos, guiones ni vinetas.
-NO expliques tu razonamiento.`;
+NO uses asteriscos, guiones ni vinetas.`;
 
             if (esPreguntaEspecifica) {
-                promptUsuario = `PREGUNTA: "${preguntaLimpia}"
+                userPrompt = `PREGUNTA: "${preguntaLimpia}"
 
 Dupla 1 (Presente): ${a} y ${b} -> Mensaje conjunto sobre la situacion ACTUAL en relacion a la pregunta.
 Dupla 2 (Futuro): ${c} y ${d} -> Mensaje conjunto sobre la EVOLUCION en relacion a la pregunta.
 
 Responde DIRECTAMENTE a la pregunta. Conecta cada dupla con la duda especifica. Solo HTML.`;
             } else {
-                promptUsuario = `Tema: ${tema}
+                userPrompt = `Tema: ${tema}
 
 Dupla 1 (Presente): ${a} y ${b} -> Interpretacion conjunta de la situacion actual.
 Dupla 2 (Futuro): ${c} y ${d} -> Interpretacion conjunta de la evolucion.
@@ -309,53 +219,19 @@ Solo HTML. NO carta por carta.`;
             }
         }
 
-        console.log('Llamando a Groq API... Modelo:', MODEL_NAME);
+        console.log('Llamando a Gemini... Modelo:', GEMINI_MODEL);
 
-        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${API_KEY}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                model: MODEL_NAME,
-                messages: [
-                    { role: 'system', content: promptSistema },
-                    { role: 'user', content: promptUsuario }
-                ],
-                temperature: esModoGratis ? 0.7 : (estilo === 'manual' ? 0.2 : 0.6),
-                max_tokens: esModoGratis ? 800 : 2000
-            })
-        });
+        const text = await llamarGemini(systemPrompt, userPrompt);
 
-        const data = await response.json();
-
-        console.log('Status Groq:', response.status);
-        if (data.error) console.log('Error Groq:', data.error.message);
-
-        if (!response.ok || !data.choices || data.choices.length === 0) {
-            console.error('Groq error:', data.error?.message || 'Sin choices');
-            return res.status(500).json({
-                error: 'Respuesta incompleta del proveedor de IA.',
-                detalle: data.error?.message || `HTTP ${response.status}`,
-                groq_status: response.status,
-                groq_code: data.error?.code || null
-            });
-        }
-
-        const rawContent = data.choices[0].message?.content || '';
-        console.log('Raw content length:', rawContent.length);
-        console.log('Raw content preview:', rawContent.substring(0, 150).replace(/\n/g, ' '));
-
-        let text = extraerRespuestaReal(rawContent);
-        console.log('Limpio length:', text.length);
-        console.log('Limpio preview:', text.substring(0, 150).replace(/\n/g, ' '));
+        console.log('Respuesta Gemini length:', text.length);
+        console.log('Respuesta preview:', text.substring(0, 200).replace(/\n/g, ' '));
 
         if (!text || text.length < 30) {
-            console.warn('Texto vacio o muy corto despues de limpiar, usando fallback');
-            text = esModoGratis 
+            console.warn('Respuesta vacia o muy corta, usando fallback');
+            const fallback = esModoGratis 
                 ? `<div class="reading-section"><h3>Conclusion</h3><p>Las cartas ${a} y ${b} indican que la situacion actual requiere atencion.</p></div><div class="reading-section"><h3>Prediccion</h3><p>La Dupla ${c} y ${d} revela un cambio en el horizonte.</p></div>`
                 : `<div class="reading-section"><h3>Dupla 1: Presente (${a} + ${b})</h3><p>Estas dos cartas juntas revelan la energia actual.</p></div><div class="reading-section"><h3>Dupla 2: Futuro (${c} + ${d})</h3><p>Estas dos cartas juntas indican la evolucion que se avecina.</p></div>`;
+            return res.json({ lectura: fallback });
         }
 
         console.log('Respuesta enviada al cliente (', text.length, 'chars)');
@@ -377,7 +253,7 @@ app.post('/repregunta', async (req, res) => {
         return res.status(400).json({ error: 'Falta la repregunta.' });
     }
 
-    if (!API_KEY) {
+    if (!GEMINI_API_KEY) {
         return res.status(500).json({ error: 'API Key no configurada.' });
     }
 
@@ -391,41 +267,19 @@ app.post('/repregunta', async (req, res) => {
         const c = cartas?.c || '';
         const d = cartas?.d || '';
 
-        const promptSistema = `${personalidad}
+        const systemPrompt = `${personalidad}
 NUEVA PREGUNTA sobre la misma tirada.
 Cartas (por duplas): Dupla 1: ${a} y ${b}. Dupla 2: ${c} y ${d}.
 Responde DIRECTAMENTE a la nueva pregunta. Maximo 2 parrafos.
-Solo HTML basico. NO asteriscos. NO expliques tu razonamiento.`;
+Solo HTML basico. NO asteriscos.`;
 
-        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${API_KEY}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                model: MODEL_NAME,
-                messages: [
-                    { role: 'system', content: promptSistema },
-                    { role: 'user', content: repregunta.trim().slice(0, 300) }
-                ],
-                temperature: 0.5,
-                max_tokens: 800
-            })
-        });
+        const text = await llamarGemini(systemPrompt, repregunta.trim().slice(0, 300));
 
-        const data = await response.json();
-
-        if (!response.ok || !data.choices || data.choices.length === 0) {
-            return res.status(500).json({ error: 'Error en la API de IA', detalle: data.error?.message });
+        if (!text || text.length < 20) {
+            return res.json({ respuesta: '<p>Las cartas sugieren reflexionar con calma sobre este aspecto.</p>' });
         }
 
-        let respuestaIA = extraerRespuestaReal(data.choices[0].message?.content || '');
-        if (!respuestaIA || respuestaIA.length < 20) {
-            respuestaIA = '<p>Las cartas sugieren reflexionar con calma sobre este aspecto.</p>';
-        }
-
-        return res.json({ respuesta: respuestaIA });
+        return res.json({ respuesta: text });
 
     } catch (error) {
         console.error('Error en /repregunta:', error);
