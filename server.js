@@ -49,6 +49,8 @@ const Usuario = mongoose.models.Usuario || mongoose.model('Usuario', UsuarioSche
 // ==========================================
 // 3. CONFIGURACION GEMINI
 // ==========================================
+// Las keys nuevas de Gemini empiezan con AQ... (Authentication keys)
+// Las viejas AIza... seran rechazadas en septiembre 2026
 // Obtener API key gratis en: https://aistudio.google.com/app/apikey
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.GROQ_API_KEY;
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
@@ -58,7 +60,9 @@ console.log('CONFIG SERVIDOR:');
 console.log('  IA: Google Gemini');
 console.log('  Modelo:', GEMINI_MODEL);
 console.log('  API_KEY existe:', !!GEMINI_API_KEY);
-console.log('  API_KEY primeros 10:', GEMINI_API_KEY ? GEMINI_API_KEY.substring(0, 10) + '...' : 'NO');
+if (GEMINI_API_KEY) {
+    console.log('  API_KEY formato:', GEMINI_API_KEY.substring(0, 5) + '...');
+}
 console.log('  ADMIN_TOKEN existe:', !!ADMIN_TOKEN);
 
 // ==========================================
@@ -81,8 +85,10 @@ function verificarAdmin(req, res, next) {
 // ==========================================
 // FUNCION: LLAMAR A GEMINI
 // ==========================================
+// Usamos el endpoint nativo de Gemini con header x-goog-api-key
+// Este endpoint funciona tanto con keys AIza... como AQ...
 async function llamarGemini(systemPrompt, userPrompt) {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
     const body = {
         contents: [
@@ -102,11 +108,19 @@ async function llamarGemini(systemPrompt, userPrompt) {
 
     const response = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': GEMINI_API_KEY
+        },
         body: JSON.stringify(body)
     });
 
     const data = await response.json();
+
+    if (!response.ok) {
+        console.error('Gemini HTTP error:', response.status, JSON.stringify(data));
+        throw new Error(`Gemini HTTP ${response.status}: ${data.error?.message || JSON.stringify(data)}`);
+    }
 
     if (data.error) {
         throw new Error(`Gemini error: ${data.error.message || JSON.stringify(data.error)}`);
