@@ -49,8 +49,9 @@ const Usuario = mongoose.models.Usuario || mongoose.model('Usuario', UsuarioSche
 // ==========================================
 // 3. CONFIGURACION GROQ
 // ==========================================
-// mistral-saba-24b: modelo de produccion, NO genera thinking tags, responde directo y completo
-const MODEL_NAME = process.env.MODEL_NAME || 'mistral-saba-24b';
+// openai/gpt-oss-20b: modelo de razonamiento, genera <think> tags
+// Necesitamos muchos tokens para que piense y luego responda
+const MODEL_NAME = process.env.MODEL_NAME || 'openai/gpt-oss-20b';
 const API_KEY = process.env.GROQ_API_KEY || process.env.API_KEY;
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
 
@@ -71,6 +72,62 @@ function verificarAdmin(req, res, next) {
         return res.status(403).json({ error: 'Acceso denegado.' });
     }
     next();
+}
+
+// ==========================================
+// FUNCION: EXTRAER RESPUESTA REAL
+// ==========================================
+// gpt-oss genera <think>...</think> con el razonamiento interno.
+// La respuesta real viene DESPUES del </think>.
+function extraerRespuesta(texto) {
+    if (!texto) return '';
+
+    // Estrategia 1: Buscar </think> y tomar todo lo que viene despues
+    const idxCierre = texto.lastIndexOf('</think>');
+    if (idxCierre !== -1) {
+        const despues = texto.substring(idxCierre + 8).trim();
+        if (despues.length > 20) {
+            console.log('  Respuesta extraida despues de </think> (', despues.length, 'chars)');
+            return despues;
+        }
+    }
+
+    // Estrategia 2: Buscar <think> y cortar todo desde ahi hasta el cierre
+    const idxApertura = texto.indexOf('<think>');
+    if (idxApertura !== -1) {
+        const antes = texto.substring(0, idxApertura).trim();
+        const despuesDelTag = texto.substring(idxApertura + 7);
+        const idxCierre2 = despuesDelTag.indexOf('</think>');
+        if (idxCierre2 !== -1) {
+            const despues = despuesDelTag.substring(idxCierre2 + 8).trim();
+            if (despues.length > 20) {
+                console.log('  Respuesta extraida despues de </think> v2 (', despues.length, 'chars)');
+                return despues;
+            }
+        }
+        // Si no hay cierre, devolver lo que hay antes del <think>
+        if (antes.length > 20) {
+            console.log('  Solo contenido antes de <think> (', antes.length, 'chars)');
+            return antes;
+        }
+    }
+
+    // Estrategia 3: Buscar donde empieza la respuesta real (HTML o texto en espanol)
+    const idxDiv = texto.indexOf('<div');
+    if (idxDiv !== -1) {
+        return texto.substring(idxDiv);
+    }
+
+    // Estrategia 4: Buscar palabras clave de respuesta
+    const palabrasClave = ['Conclusion', 'Prediccion', 'Dupla', 'Presente', 'Futuro', 'El camino', 'Debes', 'La situacion', 'Las cartas'];
+    for (const palabra of palabrasClave) {
+        const idx = texto.indexOf(palabra);
+        if (idx !== -1 && idx < texto.length - 30) {
+            return texto.substring(idx);
+        }
+    }
+
+    return texto.trim();
 }
 
 // ==========================================
@@ -99,46 +156,39 @@ app.post('/tirada', async (req, res) => {
         const esPreguntaEspecifica = (tema === 'Pregunta Especifica' || tema === 'Pregunta Especifica') && preguntaLimpia.length > 0;
         const esModoGratis = modo === 'gratis';
 
-        let mensaje = '';
+        let systemPrompt = '';
+        let userPrompt = '';
 
         if (esModoGratis) {
-            mensaje = `Eres Morgana, experta lectora de Tarot. Tono mistico, directo y predictivo.
+            systemPrompt = `Eres Morgana, experta lectora de Tarot. Tono mistico, directo y predictivo.
+Responde SOLO con 2 secciones HTML con class="reading-section".
+Cada seccion debe tener al menos 3 oraciones completas.
+NO saludes. NO uses asteriscos ni markdown.`;
 
-Responde con EXACTAMENTE 2 secciones HTML, cada una con class="reading-section".
-Cada seccion debe tener minimo 3 oraciones completas.
-NO saludes. NO uses asteriscos ni markdown.
-
-Pregunta: "${preguntaLimpia || 'Consulta general'}"
+            userPrompt = `Pregunta: "${preguntaLimpia || 'Consulta general'}"
 Dupla 1 (Presente): ${a} y ${b}
 Dupla 2 (Futuro): ${c} y ${d}
 
 Responde en espanol. Seccion 1 = CONCLUSION sobre la pregunta. Seccion 2 = PREDICCION.`;
 
         } else if (estilo === 'manual') {
+            systemPrompt = `Actua como diccionario tecnico de Tarot. Tono neutro y analitico.
+Responde SOLO con 2 secciones HTML con class="reading-section".
+Cada seccion debe tener al menos 3 oraciones completas.
+NO uses asteriscos ni markdown.`;
+
             if (esPreguntaEspecifica) {
-                mensaje = `Actua como diccionario tecnico de Tarot. Tono neutro y analitico.
-
-Responde con EXACTAMENTE 2 secciones HTML, cada una con class="reading-section".
-Cada seccion debe tener minimo 3 oraciones completas.
-NO uses asteriscos ni markdown.
-
-Pregunta: "${preguntaLimpia}"
+                userPrompt = `Pregunta: "${preguntaLimpia}"
 Dupla 1 (Presente): ${a} y ${b} -> Significado conjunto sobre la pregunta.
 Dupla 2 (Futuro): ${c} y ${d} -> Significado conjunto sobre la pregunta.
 
-Solo interpretaciones conjuntas de cada dupla. No carta por carta.`;
+Solo significados conjuntos de cada dupla. No carta por carta.`;
             } else {
-                mensaje = `Diccionario tecnico de Tarot. Tono neutro.
-
-Responde con EXACTAMENTE 2 secciones HTML, cada una con class="reading-section".
-Cada seccion debe tener minimo 3 oraciones completas.
-NO uses asteriscos ni markdown.
-
-Tema: ${tema}
+                userPrompt = `Tema: ${tema}
 Dupla 1 (Presente): ${a} y ${b} -> Significado conjunto.
 Dupla 2 (Futuro): ${c} y ${d} -> Significado conjunto.
 
-Solo interpretaciones conjuntas.`;
+Solo significados conjuntos.`;
             }
 
         } else {
@@ -146,26 +196,19 @@ Solo interpretaciones conjuntas.`;
                 ? 'Eres Morgana, lectora de Tarot. Tono mistico, directo y predictivo. Respuestas concretas, no genericas.'
                 : 'Eres terapeuta de Tarot Evolutivo. Tono reflexivo y empatico. Interpretaciones profundas pero concretas.';
 
+            systemPrompt = `${personalidad}
+Responde SOLO con 2 secciones HTML con class="reading-section".
+Cada seccion debe tener al menos 3 oraciones completas.
+NO uses asteriscos ni markdown.`;
+
             if (esPreguntaEspecifica) {
-                mensaje = `${personalidad}
-
-Responde con EXACTAMENTE 2 secciones HTML, cada una con class="reading-section".
-Cada seccion debe tener minimo 3 oraciones completas.
-NO uses asteriscos ni markdown.
-
-Pregunta: "${preguntaLimpia}"
+                userPrompt = `Pregunta: "${preguntaLimpia}"
 Dupla 1 (Presente): ${a} y ${b} -> Interpretacion conjunta sobre la pregunta.
 Dupla 2 (Futuro): ${c} y ${d} -> Interpretacion conjunta sobre la pregunta.
 
 Responde DIRECTAMENTE a la pregunta. Conecta cada dupla con la duda especifica.`;
             } else {
-                mensaje = `${personalidad}
-
-Responde con EXACTAMENTE 2 secciones HTML, cada una con class="reading-section".
-Cada seccion debe tener minimo 3 oraciones completas.
-NO uses asteriscos ni markdown.
-
-Tema: ${tema}
+                userPrompt = `Tema: ${tema}
 Dupla 1 (Presente): ${a} y ${b} -> Interpretacion conjunta.
 Dupla 2 (Futuro): ${c} y ${d} -> Interpretacion conjunta.`;
             }
@@ -182,11 +225,11 @@ Dupla 2 (Futuro): ${c} y ${d} -> Interpretacion conjunta.`;
             body: JSON.stringify({
                 model: MODEL_NAME,
                 messages: [
-                    { role: 'system', content: 'Eres un experto lector de Tarot. Respondes siempre en espanol con HTML completo y bien desarrollado.' },
-                    { role: 'user', content: mensaje }
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userPrompt }
                 ],
                 temperature: 0.7,
-                max_tokens: 1500
+                max_tokens: 4096
             })
         });
 
@@ -201,16 +244,19 @@ Dupla 2 (Futuro): ${c} y ${d} -> Interpretacion conjunta.`;
             });
         }
 
-        const text = data.choices[0].message?.content || '';
-        console.log('Respuesta length:', text.length);
-        console.log('Respuesta preview:', text.substring(0, 200).replace(/\n/g, ' '));
+        const raw = data.choices[0].message?.content || '';
+        console.log('Raw length:', raw.length);
+        console.log('Raw primeros 200:', raw.substring(0, 200).replace(/\n/g, ' '));
+
+        let text = extraerRespuesta(raw);
+        console.log('Limpio length:', text.length);
+        console.log('Limpio primeros 200:', text.substring(0, 200).replace(/\n/g, ' '));
 
         if (!text || text.length < 30) {
             console.warn('Fallback activado');
-            const fallback = esModoGratis 
-                ? `<div class="reading-section"><h3>Conclusion</h3><p>La dupla ${a} y ${b} indica que la situacion actual requiere atencion. Hay energia presente que pide ser comprendida en profundidad antes de actuar.</p></div><div class="reading-section"><h3>Prediccion</h3><p>La dupla ${c} y ${d} revela un cambio significativo en el horizonte. La evolucion traera nuevas perspectivas y oportunidades de crecimiento.</p></div>`
-                : `<div class="reading-section"><h3>Dupla 1: Presente</h3><p>La combinacion de ${a} y ${b} revela una energia actual intensa que pide ser comprendida en su conjunto. Hay dinamicas ocultas que influyen en la situacion.</p></div><div class="reading-section"><h3>Dupla 2: Futuro</h3><p>La dupla ${c} y ${d} indica una evolucion importante que transformara la situacion de manera significativa.</p></div>`;
-            return res.json({ lectura: fallback });
+            text = esModoGratis 
+                ? `<div class="reading-section"><h3>Conclusion</h3><p>La dupla ${a} y ${b} indica que la situacion actual requiere atencion y reflexion profunda. Hay energias presentes que piden ser comprendidas antes de tomar cualquier decision importante.</p></div><div class="reading-section"><h3>Prediccion</h3><p>La dupla ${c} y ${d} revela un cambio significativo en el horizonte que traera nuevas oportunidades de crecimiento y transformacion.</p></div>`
+                : `<div class="reading-section"><h3>Dupla 1: Presente</h3><p>La combinacion de ${a} y ${b} revela una energia actual intensa que pide ser comprendida en su conjunto. Hay dinamicas ocultas que influyen en la situacion y requieren atencion.</p></div><div class="reading-section"><h3>Dupla 2: Futuro</h3><p>La dupla ${c} y ${d} indica una evolucion importante que transformara la situacion de manera significativa, abriendo nuevos caminos.</p></div>`;
         }
 
         return res.json({ lectura: text });
@@ -245,12 +291,11 @@ app.post('/repregunta', async (req, res) => {
         const c = cartas?.c || '';
         const d = cartas?.d || '';
 
-        const mensaje = `${personalidad}
+        const systemPrompt = `${personalidad}
+Responde con HTML simple. Al menos 3 oraciones completas.
+NO uses asteriscos ni markdown.`;
 
-Responde con HTML simple. Minimo 3 oraciones completas.
-NO uses asteriscos ni markdown.
-
-Cartas de la tirada: ${a} y ${b} (presente), ${c} y ${d} (futuro).
+        const userPrompt = `Cartas de la tirada: ${a} y ${b} (presente), ${c} y ${d} (futuro).
 Nueva pregunta: ${repregunta.trim().slice(0, 300)}
 
 Responde directo a la pregunta.`;
@@ -264,11 +309,11 @@ Responde directo a la pregunta.`;
             body: JSON.stringify({
                 model: MODEL_NAME,
                 messages: [
-                    { role: 'system', content: 'Eres un experto lector de Tarot. Respondes siempre en espanol con HTML completo.' },
-                    { role: 'user', content: mensaje }
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userPrompt }
                 ],
                 temperature: 0.7,
-                max_tokens: 800
+                max_tokens: 2048
             })
         });
 
@@ -278,7 +323,7 @@ Responde directo a la pregunta.`;
             return res.status(500).json({ error: 'Error en la API de IA' });
         }
 
-        let respuesta = data.choices[0].message?.content || '';
+        let respuesta = extraerRespuesta(data.choices[0].message?.content || '');
         if (!respuesta || respuesta.length < 20) {
             respuesta = '<p>Las cartas sugieren reflexionar profundamente sobre este aspecto antes de tomar una decision.</p>';
         }
