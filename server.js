@@ -7,10 +7,10 @@ const app = express();
 
 const corsOptions = {
     origin: [
+        'https://tarot-ia.netlify.app',
         'https://tarotia-app-psi.github.io',
         'http://localhost:3000',
-        'http://127.0.0.1:5500'
-        'https://tarot-ia.netlify.app', // 👈 ¡Nuevo dominio de Netlify agregado!
+        'http://127.0.0.1:5500' // 👈 La coma que faltaba va acá si hay más elementos
     ],
     methods: ['GET', 'POST', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'x-admin-token'],
@@ -18,6 +18,7 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
+app.options('*', cors(corsOptions)); // 👈 Agregá esta línea para manejar las verificaciones previas (preflight)
 app.use(express.json());
 app.use(express.static(__dirname));
 
