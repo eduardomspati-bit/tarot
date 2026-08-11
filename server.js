@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
+const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
 const app = express();
@@ -10,7 +11,8 @@ const corsOptions = {
         'https://tarot-ia.netlify.app',
         'https://tarotia-app-psi.github.io',
         'http://localhost:3000',
-        'http://127.0.0.1:5500'
+        'http://127.0.0.1:5500',
+        'http://localhost:5500'
     ],
     methods: ['GET', 'POST', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'x-admin-token'],
@@ -23,10 +25,24 @@ app.use(express.json());
 app.use(express.static(__dirname));
 
 // ==========================================
-// 1. CONEXION A MONGODB ATLAS
+// CONFIGURACIÓN
 // ==========================================
 const MONGO_URI = process.env.MONGO_URI;
+const MODEL_NAME = process.env.MODEL_NAME || 'openai/gpt-oss-20b';
+const API_KEY = process.env.GROQ_API_KEY || process.env.API_KEY;
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
+const JWT_SECRET = process.env.JWT_SECRET || 'tarotia-secret-key-2026';
+const MAX_MUESTRAS_FISICAS = 5;
 
+console.log('CONFIG SERVIDOR:');
+console.log('  MODEL_NAME:', MODEL_NAME);
+console.log('  API_KEY existe:', !!API_KEY);
+console.log('  ADMIN_TOKEN existe:', !!ADMIN_TOKEN);
+console.log('  MONGO_URI existe:', !!MONGO_URI);
+
+// ==========================================
+// MONGODB
+// ==========================================
 if (MONGO_URI) {
     mongoose.connect(MONGO_URI)
         .then(() => console.log('Conectado a MongoDB Atlas'))
@@ -36,43 +52,306 @@ if (MONGO_URI) {
 }
 
 // ==========================================
-// 2. MODELO DE DATOS
+// MODELOS
 // ==========================================
 const UsuarioSchema = new mongoose.Schema({
     nombre: { type: String, required: true },
-    email: { type: String, required: true, unique: true },
+    email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     plan: { type: String, enum: ['Gratis', 'Premium'], default: 'Gratis' },
     totalTiradas: { type: Number, default: 0 },
-    ultimaConexion: { type: String, default: () => new Date().toISOString().split('T')[0] }
+    muestrasFisicasUsadas: { type: Number, default: 0 },
+    ultimaConexion: { type: String, default: () => new Date().toISOString().split('T')[0] },
+    codigoPremiumUsado: { type: String, default: null }
 }, { timestamps: true });
 
 const Usuario = mongoose.models.Usuario || mongoose.model('Usuario', UsuarioSchema);
 
-// ==========================================
-// 3. CONFIGURACION GROQ
-// ==========================================
-const MODEL_NAME = process.env.MODEL_NAME || 'openai/gpt-oss-20b';
-const API_KEY = process.env.GROQ_API_KEY || process.env.API_KEY;
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
+const CodigoPremiumSchema = new mongoose.Schema({
+    codigo: { type: String, required: true, unique: true, uppercase: true },
+    usado: { type: Boolean, default: false },
+    usadoPor: { type: mongoose.Schema.Types.ObjectId, ref: 'Usuario', default: null },
+    fechaUso: { type: Date, default: null }
+}, { timestamps: true });
 
-console.log('CONFIG SERVIDOR:');
-console.log('  MODEL_NAME:', MODEL_NAME);
-console.log('  API_KEY existe:', !!API_KEY);
-console.log('  ADMIN_TOKEN existe:', !!ADMIN_TOKEN);
+const CodigoPremium = mongoose.models.CodigoPremium || mongoose.model('CodigoPremium', CodigoPremiumSchema);
 
 // ==========================================
-// MIDDLEWARE DE ADMIN
+// MIDDLEWARE
 // ==========================================
 function verificarAdmin(req, res, next) {
     const token = req.headers['x-admin-token'];
-    if (!ADMIN_TOKEN) {
-        return res.status(500).json({ error: 'Configuracion incompleta.' });
-    }
-    if (!token || token !== ADMIN_TOKEN) {
-        return res.status(403).json({ error: 'Acceso denegado.' });
-    }
+    if (!ADMIN_TOKEN) return res.status(500).json({ error: 'Configuracion incompleta.' });
+    if (!token || token !== ADMIN_TOKEN) return res.status(403).json({ error: 'Acceso denegado.' });
     next();
 }
+
+function verificarAuth(req, res, next) {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    if (!token) return res.status(401).json({ error: 'Token requerido.' });
+    try {
+        req.usuario = jwt.verify(token, JWT_SECRET);
+        next();
+    } catch (err) {
+        return res.status(403).json({ error: 'Token invalido o expirado.' });
+    }
+}
+
+// ==========================================
+// AUTH - REGISTRO / LOGIN / PERFIL
+// ==========================================
+
+// Registro
+app.post('/api/auth/registrar', async (req, res) => {
+    const { nombre, email } = req.body;
+    if (!email || typeof email !== 'string' || !email.includes('@')) {
+        return res.status(400).json({ error: 'Email invalido.' });
+    }
+    const nombreLimpio = (nombre && typeof nombre === 'string') ? nombre.trim() : 'Consultante';
+    const emailLimpio = email.toLowerCase().trim();
+
+    try {
+        let usuario = await Usuario.findOne({ email: emailLimpio });
+        if (usuario) {
+            // Si ya existe, solo actualizamos y devolvemos token
+            usuario.nombre = nombreLimpio;
+            usuario.ultimaConexion = new Date().toISOString().split('T')[0];
+            await usuario.save();
+        } else {
+            usuario = new Usuario({
+                nombre: nombreLimpio,
+                email: emailLimpio,
+                plan: 'Gratis',
+                totalTiradas: 0,
+                muestrasFisicasUsadas: 0
+            });
+            await usuario.save();
+        }
+
+        const token = jwt.sign(
+            { userId: usuario._id, email: usuario.email, plan: usuario.plan },
+            JWT_SECRET,
+            { expiresIn: '30d' }
+        );
+
+        res.json({
+            mensaje: 'Usuario registrado',
+            token,
+            usuario: {
+                id: usuario._id,
+                nombre: usuario.nombre,
+                email: usuario.email,
+                plan: usuario.plan,
+                totalTiradas: usuario.totalTiradas,
+                muestrasFisicasRestantes: Math.max(0, MAX_MUESTRAS_FISICAS - usuario.muestrasFisicasUsadas)
+            }
+        });
+    } catch (error) {
+        console.error('Error en registro:', error);
+        res.status(500).json({ error: 'Error al registrar usuario.' });
+    }
+});
+
+// Login
+app.post('/api/auth/login', async (req, res) => {
+    const { email } = req.body;
+    if (!email || typeof email !== 'string' || !email.includes('@')) {
+        return res.status(400).json({ error: 'Email invalido.' });
+    }
+    const emailLimpio = email.toLowerCase().trim();
+
+    try {
+        const usuario = await Usuario.findOne({ email: emailLimpio });
+        if (!usuario) {
+            return res.status(404).json({ error: 'Usuario no encontrado. Registrate primero.' });
+        }
+
+        usuario.ultimaConexion = new Date().toISOString().split('T')[0];
+        await usuario.save();
+
+        const token = jwt.sign(
+            { userId: usuario._id, email: usuario.email, plan: usuario.plan },
+            JWT_SECRET,
+            { expiresIn: '30d' }
+        );
+
+        res.json({
+            mensaje: 'Login exitoso',
+            token,
+            usuario: {
+                id: usuario._id,
+                nombre: usuario.nombre,
+                email: usuario.email,
+                plan: usuario.plan,
+                totalTiradas: usuario.totalTiradas,
+                muestrasFisicasRestantes: Math.max(0, MAX_MUESTRAS_FISICAS - usuario.muestrasFisicasUsadas)
+            }
+        });
+    } catch (error) {
+        console.error('Error en login:', error);
+        res.status(500).json({ error: 'Error al iniciar sesion.' });
+    }
+});
+
+// Perfil
+app.get('/api/auth/perfil', verificarAuth, async (req, res) => {
+    try {
+        const usuario = await Usuario.findById(req.usuario.userId);
+        if (!usuario) return res.status(404).json({ error: 'Usuario no encontrado.' });
+
+        res.json({
+            usuario: {
+                id: usuario._id,
+                nombre: usuario.nombre,
+                email: usuario.email,
+                plan: usuario.plan,
+                totalTiradas: usuario.totalTiradas,
+                muestrasFisicasRestantes: Math.max(0, MAX_MUESTRAS_FISICAS - usuario.muestrasFisicasUsadas)
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ error: 'Error al obtener perfil.' });
+    }
+});
+
+// ==========================================
+// CANJEAR CODIGO PREMIUM
+// ==========================================
+app.post('/api/auth/canjear-codigo', verificarAuth, async (req, res) => {
+    const { codigo } = req.body;
+    if (!codigo) return res.status(400).json({ error: 'Codigo requerido.' });
+
+    const codigoLimpio = codigo.trim().toUpperCase();
+
+    try {
+        // Codigos admin hardcodeados (siempre validos)
+        const codigosAdmin = ['ADMIN2026', 'PASEMISTICO', 'TAROTGRATIS'];
+
+        if (codigosAdmin.includes(codigoLimpio)) {
+            const usuario = await Usuario.findById(req.usuario.userId);
+            usuario.plan = 'Premium';
+            usuario.codigoPremiumUsado = codigoLimpio;
+            await usuario.save();
+
+            const nuevoToken = jwt.sign(
+                { userId: usuario._id, email: usuario.email, plan: usuario.plan },
+                JWT_SECRET,
+                { expiresIn: '30d' }
+            );
+
+            return res.json({
+                mensaje: 'Codigo premium activado con exito.',
+                token: nuevoToken,
+                usuario: {
+                    id: usuario._id,
+                    nombre: usuario.nombre,
+                    email: usuario.email,
+                    plan: usuario.plan,
+                    totalTiradas: usuario.totalTiradas,
+                    muestrasFisicasRestantes: Math.max(0, MAX_MUESTRAS_FISICAS - usuario.muestrasFisicasUsadas)
+                }
+            });
+        }
+
+        // Codigos dinamicos de la base de datos
+        const codigoDB = await CodigoPremium.findOne({ codigo: codigoLimpio });
+        if (!codigoDB) return res.status(400).json({ error: 'Codigo invalido.' });
+        if (codigoDB.usado) return res.status(400).json({ error: 'Codigo ya utilizado.' });
+
+        const usuario = await Usuario.findById(req.usuario.userId);
+        usuario.plan = 'Premium';
+        usuario.codigoPremiumUsado = codigoLimpio;
+        await usuario.save();
+
+        codigoDB.usado = true;
+        codigoDB.usadoPor = usuario._id;
+        codigoDB.fechaUso = new Date();
+        await codigoDB.save();
+
+        const nuevoToken = jwt.sign(
+            { userId: usuario._id, email: usuario.email, plan: usuario.plan },
+            JWT_SECRET,
+            { expiresIn: '30d' }
+        );
+
+        res.json({
+            mensaje: 'Codigo premium activado con exito.',
+            token: nuevoToken,
+            usuario: {
+                id: usuario._id,
+                nombre: usuario.nombre,
+                email: usuario.email,
+                plan: usuario.plan,
+                totalTiradas: usuario.totalTiradas,
+                muestrasFisicasRestantes: Math.max(0, MAX_MUESTRAS_FISICAS - usuario.muestrasFisicasUsadas)
+            }
+        });
+    } catch (error) {
+        console.error('Error al canjear codigo:', error);
+        res.status(500).json({ error: 'Error al procesar el codigo.' });
+    }
+});
+
+// ==========================================
+// MUESTRAS FISICAS
+// ==========================================
+app.post('/api/tiradas/usar-muestra', verificarAuth, async (req, res) => {
+    try {
+        const usuario = await Usuario.findById(req.usuario.userId);
+
+        if (usuario.plan === 'Premium') {
+            return res.json({ premium: true, muestrasRestantes: 999 });
+        }
+
+        const restantes = Math.max(0, MAX_MUESTRAS_FISICAS - usuario.muestrasFisicasUsadas);
+        if (restantes <= 0) {
+            return res.status(403).json({ 
+                error: 'Muestras agotadas.', 
+                muestrasRestantes: 0,
+                premium: false 
+            });
+        }
+
+        usuario.muestrasFisicasUsadas += 1;
+        await usuario.save();
+
+        res.json({
+            premium: false,
+            muestrasRestantes: Math.max(0, MAX_MUESTRAS_FISICAS - usuario.muestrasFisicasUsadas)
+        });
+    } catch (error) {
+        res.status(500).json({ error: 'Error al registrar muestra.' });
+    }
+});
+
+app.get('/api/tiradas/muestras', verificarAuth, async (req, res) => {
+    try {
+        const usuario = await Usuario.findById(req.usuario.userId);
+        res.json({
+            premium: usuario.plan === 'Premium',
+            muestrasRestantes: usuario.plan === 'Premium' 
+                ? 999 
+                : Math.max(0, MAX_MUESTRAS_FISICAS - usuario.muestrasFisicasUsadas)
+        });
+    } catch (error) {
+        res.status(500).json({ error: 'Error al consultar muestras.' });
+    }
+});
+
+// ==========================================
+// REGISTRAR TIRADA (contador)
+// ==========================================
+app.post('/api/tiradas/registrar', verificarAuth, async (req, res) => {
+    try {
+        const usuario = await Usuario.findById(req.usuario.userId);
+        usuario.totalTiradas += 1;
+        usuario.ultimaConexion = new Date().toISOString().split('T')[0];
+        await usuario.save();
+        res.json({ totalTiradas: usuario.totalTiradas });
+    } catch (error) {
+        res.status(500).json({ error: 'Error al registrar tirada.' });
+    }
+});
 
 // ==========================================
 // FUNCION: EXTRAER RESPUESTA REAL
@@ -83,10 +362,7 @@ function extraerRespuesta(texto) {
     const idxCierre = texto.lastIndexOf('</thinking>');
     if (idxCierre !== -1) {
         const despues = texto.substring(idxCierre + 11).trim();
-        if (despues.length > 20) {
-            console.log('  Respuesta extraida despues de </thinking> (', despues.length, 'chars)');
-            return despues;
-        }
+        if (despues.length > 20) return despues;
     }
 
     const idxApertura = texto.indexOf('<thinking>');
@@ -96,28 +372,18 @@ function extraerRespuesta(texto) {
         const idxCierre2 = despuesDelTag.indexOf('</thinking>');
         if (idxCierre2 !== -1) {
             const despues = despuesDelTag.substring(idxCierre2 + 11).trim();
-            if (despues.length > 20) {
-                console.log('  Respuesta extraida despues de </thinking> v2 (', despues.length, 'chars)');
-                return despues;
-            }
+            if (despues.length > 20) return despues;
         }
-        if (antes.length > 20) {
-            console.log('  Solo contenido antes de <thinking> (', antes.length, 'chars)');
-            return antes;
-        }
+        if (antes.length > 20) return antes;
     }
 
     const idxDiv = texto.indexOf('<div');
-    if (idxDiv !== -1) {
-        return texto.substring(idxDiv);
-    }
+    if (idxDiv !== -1) return texto.substring(idxDiv);
 
     const palabrasClave = ['Conclusion', 'Prediccion', 'Dupla', 'Presente', 'Futuro', 'El camino', 'Debes', 'La situacion', 'Las cartas', 'Significado'];
     for (const palabra of palabrasClave) {
         const idx = texto.indexOf(palabra);
-        if (idx !== -1 && idx < texto.length - 30) {
-            return texto.substring(idx);
-        }
+        if (idx !== -1 && idx < texto.length - 30) return texto.substring(idx);
     }
 
     return texto.trim();
@@ -166,12 +432,7 @@ Dupla 2 (Futuro): ${c} y ${d}
 Responde en espanol. Seccion 1 = CONCLUSION sobre la pregunta. Seccion 2 = PREDICCION.`;
 
         } else if (estilo === 'manual') {
-            // ==========================================
-            // MAZO FISICO TECNICO / ESTRUCTURAL
-            // VERSION QUE FUNCIONABA: template HTML completo en system prompt
-            // ==========================================
             temp = 0.3;
-
             systemPrompt = `Actua como un diccionario tecnico, objetivo y neutral de Tarot.
 Tu tarea exclusiva es analizar las dos duplas de cartas que te presenta el usuario:
 - Dupla 1: ${a} y ${b}
@@ -271,21 +532,16 @@ Devuelve la respuesta EXACTAMENTE en este formato HTML (comienza directamente co
         }
 
         const raw = data.choices[0].message?.content || '';
-        console.log('Raw length:', raw.length);
-        console.log('Raw primeros 200:', raw.substring(0, 200).replace(/\n/g, ' '));
-
         let text = extraerRespuesta(raw);
-        console.log('Limpio length:', text.length);
-        console.log('Limpio primeros 200:', text.substring(0, 200).replace(/\n/g, ' '));
 
         if (!text || text.length < 30) {
             console.warn('Fallback activado');
             if (esModoGratis) {
-                text = `<div class="reading-section"><h3>Conclusion</h3><p>La dupla ${a} y ${b} indica que la situacion actual requiere atencion y reflexion profunda. Hay energias presentes que piden ser comprendidas antes de tomar cualquier decision importante.</p></div><div class="reading-section"><h3>Prediccion</h3><p>La dupla ${c} y ${d} revela un cambio significativo en el horizonte que traera nuevas oportunidades de crecimiento y transformacion.</p></div>`;
+                text = `<div class="reading-section"><h3>Conclusion</h3><p>La dupla ${a} y ${b} indica que la situacion actual requiere atencion y reflexion profunda.</p></div><div class="reading-section"><h3>Prediccion</h3><p>La dupla ${c} y ${d} revela un cambio significativo en el horizonte.</p></div>`;
             } else if (estilo === 'manual') {
                 text = `<div class="reading-section"><h3>Dupla 1: ${a} + ${b}</h3><ul><li><strong>Significado 1:</strong> Energia presente que marca la dinamica actual de la situacion.</li><li><strong>Significado 2:</strong> Indicador de fuerzas en juego que condicionan el desarrollo inmediato.</li><li><strong>Significado 3:</strong> Representacion de los factores dominantes en este momento.</li></ul></div><div class="reading-section"><h3>Dupla 2: ${c} + ${d}</h3><ul><li><strong>Significado 1:</strong> Proyeccion de tendencias que se manifestaran en el futuro cercano.</li><li><strong>Significado 2:</strong> Indicador de posibles cambios o evoluciones en el camino.</li><li><strong>Significado 3:</strong> Representacion de las energias que estan por activarse.</li></ul></div>`;
             } else {
-                text = `<div class="reading-section"><h3>El Presente y Origen (${a} + ${b})</h3><p>La combinacion de ${a} y ${b} revela una energia actual intensa que pide ser comprendida en su conjunto. Hay dinamicas ocultas que influyen en la situacion y requieren atencion.</p></div><div class="reading-section"><h3>El Camino hacia el Futuro (${c} + ${d})</h3><p>La dupla ${c} y ${d} indica una evolucion importante que transformara la situacion de manera significativa, abriendo nuevos caminos.</p></div><div class="reading-section"><h3>Predicciones del Oraculo</h3><p>Se avecinan cambios profundos que redefiniran tu perspectiva. La paciencia sera clave para aprovechar las oportunidades que se presentaran en los proximos dias.</p></div><div class="reading-section"><h3>Consejo y Conclusion</h3><p><span id="conclusion">Confia en tu intuicion y manten la mente abierta ante lo nuevo.</span></p></div>`;
+                text = `<div class="reading-section"><h3>El Presente y Origen (${a} + ${b})</h3><p>La combinacion de ${a} y ${b} revela una energia actual intensa que pide ser comprendida en su conjunto.</p></div><div class="reading-section"><h3>El Camino hacia el Futuro (${c} + ${d})</h3><p>La dupla ${c} y ${d} indica una evolucion importante que transformara la situacion.</p></div><div class="reading-section"><h3>Predicciones del Oraculo</h3><p>Se avecinan cambios profundos que redefiniran tu perspectiva.</p></div><div class="reading-section"><h3>Consejo y Conclusion</h3><p><span id="conclusion">Confia en tu intuicion y manten la mente abierta ante lo nuevo.</span></p></div>`;
             }
         }
 
@@ -313,9 +569,9 @@ app.post('/repregunta', async (req, res) => {
 
     try {
         const personalidad = estilo === 'manual' 
-            ? 'Diccionario tecnico de Tarot. Tono neutro y descriptivo. Responde con significados sin interpretar ni relacionar duplas. Referite directamente a la pregunta del usuario.'
-            : (estilo === 'morgana' || estilo === 'magico') ? 'Morgana, lectora mistica. Respuestas concretas referidas a la pregunta del usuario.'
-            : 'Terapeuta de Tarot Evolutivo. Respuestas profundas referidas a la pregunta del usuario.';
+            ? 'Diccionario tecnico de Tarot. Tono neutro y descriptivo. Responde con significados sin interpretar ni relacionar duplas.'
+            : (estilo === 'morgana' || estilo === 'magico') ? 'Morgana, lectora mistica. Respuestas concretas.'
+            : 'Terapeuta de Tarot Evolutivo. Respuestas profundas.';
 
         const a = cartas?.a || '';
         const b = cartas?.b || '';
@@ -324,13 +580,12 @@ app.post('/repregunta', async (req, res) => {
 
         const systemPrompt = `${personalidad}
 Responde con HTML simple. Al menos 3 oraciones completas.
-NO uses asteriscos ni markdown.
-La respuesta debe referirse directamente a la pregunta del usuario, no algo generico.`;
+NO uses asteriscos ni markdown.`;
 
         const userPrompt = `Cartas de la tirada: ${a} y ${b} (presente), ${c} y ${d} (futuro).
-Nueva pregunta del usuario: ${repregunta.trim().slice(0, 300)}
+Nueva pregunta: ${repregunta.trim().slice(0, 300)}
 
-Responde directo a la pregunta del usuario. NO respondas algo generico.`;
+Responde directo a la pregunta.`;
 
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
@@ -365,33 +620,6 @@ Responde directo a la pregunta del usuario. NO respondas algo generico.`;
     } catch (error) {
         console.error('Error repregunta:', error);
         return res.status(500).json({ error: 'Error en repregunta.' });
-    }
-});
-
-// ==========================================
-// ENDPOINT: REGISTRAR USUARIO
-// ==========================================
-app.post('/api/usuarios/registrar', async (req, res) => {
-    const { nombre, email } = req.body;
-    if (!email || typeof email !== 'string') return res.status(400).json({ error: 'El email es requerido.' });
-
-    try {
-        const hoy = new Date().toISOString().split('T')[0];
-        const emailLimpio = email.toLowerCase().trim();
-
-        const usuario = await Usuario.findOneAndUpdate(
-            { email: emailLimpio },
-            {
-                $inc: { totalTiradas: 1 },
-                $set: { ultimaConexion: hoy },
-                $setOnInsert: { nombre: (nombre && typeof nombre === 'string') ? nombre.trim() : 'Consultante', plan: 'Gratis' }
-            },
-            { new: true, upsert: true }
-        );
-        return res.json({ mensaje: 'Usuario registrado', usuario });
-    } catch (error) {
-        console.error('Error al registrar:', error.message);
-        return res.status(500).json({ error: 'Error al procesar usuario.' });
     }
 });
 
@@ -441,6 +669,21 @@ app.post('/api/admin/cambiar-plan', verificarAdmin, async (req, res) => {
     } catch (error) {
         console.error('Error en /api/admin/cambiar-plan:', error);
         res.status(500).json({ error: 'Error al cambiar plan' });
+    }
+});
+
+// Crear codigos premium (admin)
+app.post('/api/admin/crear-codigo', verificarAdmin, async (req, res) => {
+    const { codigo } = req.body;
+    if (!codigo) return res.status(400).json({ error: 'Codigo requerido.' });
+
+    try {
+        const nuevo = new CodigoPremium({ codigo: codigo.trim().toUpperCase() });
+        await nuevo.save();
+        res.json({ mensaje: 'Codigo creado', codigo: nuevo });
+    } catch (error) {
+        if (error.code === 11000) return res.status(400).json({ error: 'Codigo ya existe.' });
+        res.status(500).json({ error: 'Error al crear codigo.' });
     }
 });
 
