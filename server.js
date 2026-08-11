@@ -10,7 +10,7 @@ const corsOptions = {
         'https://tarot-ia.netlify.app',
         'https://tarotia-app-psi.github.io',
         'http://localhost:3000',
-        'http://127.0.0.1:5500' // 👈 La coma que faltaba va acá si hay más elementos
+        'http://127.0.0.1:5500'
     ],
     methods: ['GET', 'POST', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'x-admin-token'],
@@ -18,7 +18,7 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.options('*', cors(corsOptions)); // 👈 Agregá esta línea para manejar las verificaciones previas (preflight)
+app.options('*', cors(corsOptions));
 app.use(express.json());
 app.use(express.static(__dirname));
 
@@ -51,8 +51,6 @@ const Usuario = mongoose.models.Usuario || mongoose.model('Usuario', UsuarioSche
 // ==========================================
 // 3. CONFIGURACION GROQ
 // ==========================================
-// openai/gpt-oss-20b: modelo de razonamiento, genera <think> tags
-// Necesitamos muchos tokens para que piense y luego responda
 const MODEL_NAME = process.env.MODEL_NAME || 'openai/gpt-oss-20b';
 const API_KEY = process.env.GROQ_API_KEY || process.env.API_KEY;
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
@@ -79,48 +77,41 @@ function verificarAdmin(req, res, next) {
 // ==========================================
 // FUNCION: EXTRAER RESPUESTA REAL
 // ==========================================
-// gpt-oss genera <think>...</think> con el razonamiento interno.
-// La respuesta real viene DESPUES del </think>.
 function extraerRespuesta(texto) {
     if (!texto) return '';
 
-    // Estrategia 1: Buscar </think> y tomar todo lo que viene despues
-    const idxCierre = texto.lastIndexOf('</think>');
+    const idxCierre = texto.lastIndexOf('</thinking>');
     if (idxCierre !== -1) {
-        const despues = texto.substring(idxCierre + 8).trim();
+        const despues = texto.substring(idxCierre + 11).trim();
         if (despues.length > 20) {
-            console.log('  Respuesta extraida despues de </think> (', despues.length, 'chars)');
+            console.log('  Respuesta extraida despues de </thinking> (', despues.length, 'chars)');
             return despues;
         }
     }
 
-    // Estrategia 2: Buscar <think> y cortar todo desde ahi hasta el cierre
-    const idxApertura = texto.indexOf('<think>');
+    const idxApertura = texto.indexOf('<thinking>');
     if (idxApertura !== -1) {
         const antes = texto.substring(0, idxApertura).trim();
-        const despuesDelTag = texto.substring(idxApertura + 7);
-        const idxCierre2 = despuesDelTag.indexOf('</think>');
+        const despuesDelTag = texto.substring(idxApertura + 10);
+        const idxCierre2 = despuesDelTag.indexOf('</thinking>');
         if (idxCierre2 !== -1) {
-            const despues = despuesDelTag.substring(idxCierre2 + 8).trim();
+            const despues = despuesDelTag.substring(idxCierre2 + 11).trim();
             if (despues.length > 20) {
-                console.log('  Respuesta extraida despues de </think> v2 (', despues.length, 'chars)');
+                console.log('  Respuesta extraida despues de </thinking> v2 (', despues.length, 'chars)');
                 return despues;
             }
         }
-        // Si no hay cierre, devolver lo que hay antes del <think>
         if (antes.length > 20) {
-            console.log('  Solo contenido antes de <think> (', antes.length, 'chars)');
+            console.log('  Solo contenido antes de <thinking> (', antes.length, 'chars)');
             return antes;
         }
     }
 
-    // Estrategia 3: Buscar donde empieza la respuesta real (HTML o texto en espanol)
     const idxDiv = texto.indexOf('<div');
     if (idxDiv !== -1) {
         return texto.substring(idxDiv);
     }
 
-    // Estrategia 4: Buscar palabras clave de respuesta
     const palabrasClave = ['Conclusion', 'Prediccion', 'Dupla', 'Presente', 'Futuro', 'El camino', 'Debes', 'La situacion', 'Las cartas'];
     for (const palabra of palabrasClave) {
         const idx = texto.indexOf(palabra);
@@ -174,23 +165,36 @@ Dupla 2 (Futuro): ${c} y ${d}
 Responde en espanol. Seccion 1 = CONCLUSION sobre la pregunta. Seccion 2 = PREDICCION.`;
 
         } else if (estilo === 'manual') {
-            systemPrompt = `Actua como diccionario tecnico de Tarot. Tono neutro y analitico.
+            // ==========================================
+            // ESTILO MANUAL / ESTRUCTURAL TECNICO
+            // ==========================================
+            systemPrompt = `Actua como diccionario tecnico de Tarot. Tono neutro, descriptivo y analitico.
 Responde SOLO con 2 secciones HTML con class="reading-section".
-Cada seccion debe tener al menos 3 oraciones completas.
+Cada seccion debe listar exactamente 3 significados en items <p>.
+NO interpretes ni relaciones las duplas entre si.
 NO uses asteriscos ni markdown.`;
 
             if (esPreguntaEspecifica) {
                 userPrompt = `Pregunta: "${preguntaLimpia}"
-Dupla 1 (Presente): ${a} y ${b} -> Significado conjunto sobre la pregunta.
-Dupla 2 (Futuro): ${c} y ${d} -> Significado conjunto sobre la pregunta.
+Dupla 1 (Presente): ${a} y ${b}
+Dupla 2 (Futuro): ${c} y ${d}
 
-Solo significados conjuntos de cada dupla. No carta por carta.`;
+Instrucciones estrictas:
+- Seccion 1: Lista 3 significados NEUTROS de la Dupla 1 (${a} y ${b}). Solo descripciones objetivas, sin interpretar la pregunta.
+- Seccion 2: Lista 3 significados POSIBLES de la Dupla 2 (${c} y ${d}). Solo descripciones objetivas, sin interpretar la pregunta.
+- NO relaciones las duplas entre si.
+- NO interpretes la pregunta.
+- Formato: cada significado en un <p> dentro de su <div class="reading-section">.`;
             } else {
                 userPrompt = `Tema: ${tema}
-Dupla 1 (Presente): ${a} y ${b} -> Significado conjunto.
-Dupla 2 (Futuro): ${c} y ${d} -> Significado conjunto.
+Dupla 1 (Presente): ${a} y ${b}
+Dupla 2 (Futuro): ${c} y ${d}
 
-Solo significados conjuntos.`;
+Instrucciones estrictas:
+- Seccion 1: Lista 3 significados NEUTROS de la Dupla 1 (${a} y ${b}). Solo descripciones objetivas.
+- Seccion 2: Lista 3 significados POSIBLES de la Dupla 2 (${c} y ${d}). Solo descripciones objetivas.
+- NO relaciones las duplas entre si.
+- Formato: cada significado en un <p> dentro de su <div class="reading-section">.`;
             }
 
         } else {
@@ -284,7 +288,8 @@ app.post('/repregunta', async (req, res) => {
     }
 
     try {
-        const personalidad = estilo === 'manual' ? 'Oraculo analitico de Tarot.'
+        const personalidad = estilo === 'manual' 
+            ? 'Diccionario tecnico de Tarot. Tono neutro y descriptivo. Lista significados sin interpretar ni relacionar duplas.'
             : (estilo === 'morgana' || estilo === 'magico') ? 'Morgana, lectora mistica.'
             : 'Terapeuta de Tarot Evolutivo.';
 
