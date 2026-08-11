@@ -124,6 +124,30 @@ function extraerRespuesta(texto) {
 }
 
 // ==========================================
+// FUNCION: VALIDAR Y CORREGIR FORMATO MANUAL
+// ==========================================
+function corregirFormatoManual(texto, a, b, c, d) {
+    // Si el texto ya tiene 2 divs con reading-section, lo dejamos
+    const divs = texto.match(/<div class="reading-section">/g);
+    if (divs && divs.length === 2) {
+        // Verificar que cada div tenga al menos 3 <p>
+        const secciones = texto.split(/<div class="reading-section">/);
+        let corregido = '';
+        let ok = true;
+        for (let i = 1; i < secciones.length; i++) {
+            const pTags = secciones[i].match(/<p>/g);
+            if (!pTags || pTags.length < 3) {
+                ok = false;
+                break;
+            }
+        }
+        if (ok) return texto;
+    }
+    // Si no cumple, devolvemos fallback estructurado
+    return `<div class="reading-section"><h3>Dupla 1: ${a} y ${b}</h3><p>Significado 1: Energia presente que marca la dinamica actual de la situacion.</p><p>Significado 2: Indicador de fuerzas en juego que condicionan el desarrollo inmediato.</p><p>Significado 3: Representacion de los factores dominantes en este momento.</p></div><div class="reading-section"><h3>Dupla 2: ${c} y ${d}</h3><p>Significado 1: Proyeccion de tendencias que se manifestaran en el futuro cercano.</p><p>Significado 2: Indicador de posibles cambios o evoluciones en el camino.</p><p>Significado 3: Representacion de las energias que estan por activarse.</p></div>`;
+}
+
+// ==========================================
 // ENDPOINT: TIRADA
 // ==========================================
 app.post('/tirada', async (req, res) => {
@@ -151,6 +175,7 @@ app.post('/tirada', async (req, res) => {
 
         let systemPrompt = '';
         let userPrompt = '';
+        let temp = 0.7;
 
         if (esModoGratis) {
             systemPrompt = `Eres Morgana, experta lectora de Tarot. Tono mistico, directo y predictivo.
@@ -168,29 +193,51 @@ Responde en espanol. Seccion 1 = CONCLUSION sobre la pregunta. Seccion 2 = PREDI
             // ==========================================
             // MAZO FISICO TECNICO / ESTRUCTURAL
             // ==========================================
-            systemPrompt = `Dar 3 significados posibles de cada dupla 1 y 3 significados posibles de dupla 2.
-            no relacionar entre las duplas`;
+            temp = 0.2; // Muy determinista para obedecer formato
+
+            systemPrompt = `Eres un diccionario tecnico de Tarot. Tono neutro, descriptivo y analitico.
+Tu unica funcion es listar significados de cartas. NO interpretes, NO analices, NO relaciones nada.
+Responde EXACTAMENTE con este formato HTML y nada mas:
+
+<div class="reading-section">
+<h3>Dupla 1: [cartaA] y [cartaB]</h3>
+<p>Significado 1: ...</p>
+<p>Significado 2: ...</p>
+<p>Significado 3: ...</p>
+</div>
+<div class="reading-section">
+<h3>Dupla 2: [cartaC] y [cartaD]</h3>
+<p>Significado 1: ...</p>
+<p>Significado 2: ...</p>
+<p>Significado 3: ...</p>
+</div>
+
+REGLAS INQUEBRANTABLES:
+- Exactamente 2 divs con class="reading-section".
+- Exactamente 3 <p> por div, ni mas ni menos.
+- Cada <p> debe empezar con "Significado N:".
+- NO agregues introduccion, conclusion, saludos ni comentarios.
+- NO uses asteriscos, markdown, listas, numeros sueltos.
+- NO interpretes la pregunta del usuario. Solo describe las cartas.`;
 
             if (esPreguntaEspecifica) {
                 userPrompt = `Pregunta del usuario: "${preguntaLimpia}"
-Dupla 1 (Presente): ${a} y ${b}
-Dupla 2 (Futuro): ${c} y ${d}
+Dupla 1: ${a} y ${b}
+Dupla 3: ${c} y ${d}
 
-Instrucciones estrictas:
-- Seccion 1: 3 significados de la Dupla 1 (${a} y ${b}) referidos a la pregunta del usuario. Cada significado en un <p>. Sin analisis conjunto.
-- Seccion 2: 3 significados de la Dupla 2 (${c} y ${d}) referidos a la pregunta del usuario. Cada significado en un <p>. Sin analisis conjunto.
-- NO relaciones las duplas entre si.
-- La respuesta debe referirse a lo que pregunto el usuario, no algo generico.`;
+Genera 3 significados de la Dupla 1 referidos a la pregunta del usuario.
+Genera 3 significados de la Dupla 2 referidos a la pregunta del usuario.
+NO interpretes ni relaciones las duplas entre si.
+NO respondas algo generico. Cada significado debe conectar con la pregunta.`;
             } else {
-                userPrompt = `Tema: ${tema}
-Dupla 1 (Presente): ${a} y ${b}
-Dupla 2 (Futuro): ${c} y ${d}
+                // En modo diccionario puro, NO enviamos el tema para no confundir a la IA
+                userPrompt = `Dupla 1: ${a} y ${b}
+Dupla 2: ${c} y ${d}
 
-Instrucciones estrictas:
-- Seccion 1: 3 significados NEUTROS de la Dupla 1 (${a} y ${b}). Cada significado en un <p>. Sin analisis conjunto.
-- Seccion 2: 3 significados POSIBLES de la Dupla 2 (${c} y ${d}). Cada significado en un <p>. Sin analisis conjunto.
-- NO relaciones las duplas entre si.
-- Solo descripciones objetivas, modo diccionario.`;
+Genera 3 significados NEUTROS de la Dupla 1.
+Genera 3 significados POSIBLES de la Dupla 2.
+NO interpretes ni relaciones las duplas entre si.
+Solo descripciones objetivas de cada dupla, modo diccionario.`;
             }
 
         } else {
@@ -216,7 +263,7 @@ Dupla 2 (Futuro): ${c} y ${d} -> Interpretacion conjunta.`;
             }
         }
 
-        console.log('Llamando a Groq... Modelo:', MODEL_NAME);
+        console.log('Llamando a Groq... Modelo:', MODEL_NAME, 'Temp:', temp);
 
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
@@ -230,7 +277,7 @@ Dupla 2 (Futuro): ${c} y ${d} -> Interpretacion conjunta.`;
                     { role: 'system', content: systemPrompt },
                     { role: 'user', content: userPrompt }
                 ],
-                temperature: 0.7,
+                temperature: temp,
                 max_tokens: 4096
             })
         });
@@ -259,10 +306,15 @@ Dupla 2 (Futuro): ${c} y ${d} -> Interpretacion conjunta.`;
             if (esModoGratis) {
                 text = `<div class="reading-section"><h3>Conclusion</h3><p>La dupla ${a} y ${b} indica que la situacion actual requiere atencion y reflexion profunda. Hay energias presentes que piden ser comprendidas antes de tomar cualquier decision importante.</p></div><div class="reading-section"><h3>Prediccion</h3><p>La dupla ${c} y ${d} revela un cambio significativo en el horizonte que traera nuevas oportunidades de crecimiento y transformacion.</p></div>`;
             } else if (estilo === 'manual') {
-                text = `<div class="reading-section"><h3>Dupla 1: ${a} y ${b}</h3><p>Significado 1: Energia presente que marca la dinamica actual de la situacion.</p><p>Significado 2: Indicador de fuerzas en juego que condicionan el desarrollo inmediato.</p><p>Significado 3: Representacion de los factores dominantes en este momento.</p></div><div class="reading-section"><h3>Dupla 2: ${c} y ${d}</h3><p>Significado 1: Proyeccion de tendencias que se manifestaran en el futuro cercano.</p><p>Significado 2: Indicador de posibles cambios o evoluciones en el camino.</p><p>Significado 3: Representacion de las energias que estan por activarse.</p></div>`;
+                text = corregirFormatoManual('', a, b, c, d);
             } else {
                 text = `<div class="reading-section"><h3>Dupla 1: Presente</h3><p>La combinacion de ${a} y ${b} revela una energia actual intensa que pide ser comprendida en su conjunto. Hay dinamicas ocultas que influyen en la situacion y requieren atencion.</p></div><div class="reading-section"><h3>Dupla 2: Futuro</h3><p>La dupla ${c} y ${d} indica una evolucion importante que transformara la situacion de manera significativa, abriendo nuevos caminos.</p></div>`;
             }
+        }
+
+        // Para modo manual, forzamos validacion del formato
+        if (estilo === 'manual') {
+            text = corregirFormatoManual(text, a, b, c, d);
         }
 
         return res.json({ lectura: text });
