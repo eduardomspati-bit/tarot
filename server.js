@@ -1,5 +1,139 @@
+const express = require('express');
+const cors = require('cors');
+const mongoose = require('mongoose');
+require('dotenv').config();
+
+const app = express();
+
+const corsOptions = {
+    origin: [
+        'https://tarot-ia.netlify.app',
+        'https://tarotia-app-psi.github.io',
+        'http://localhost:3000',
+        'http://127.0.0.1:5500' // 👈 La coma que faltaba va acá si hay más elementos
+    ],
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-admin-token'],
+    credentials: true
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions)); // 👈 Agregá esta línea para manejar las verificaciones previas (preflight)
+app.use(express.json());
+app.use(express.static(__dirname));
+
 // ==========================================
-// ENDPOINT: TIRADA REFACTORIZADO
+// 1. CONEXION A MONGODB ATLAS
+// ==========================================
+const MONGO_URI = process.env.MONGO_URI;
+
+if (MONGO_URI) {
+    mongoose.connect(MONGO_URI)
+        .then(() => console.log('Conectado a MongoDB Atlas'))
+        .catch(err => console.error('Error MongoDB:', err.message));
+} else {
+    console.warn('MONGO_URI no configurada.');
+}
+
+// ==========================================
+// 2. MODELO DE DATOS
+// ==========================================
+const UsuarioSchema = new mongoose.Schema({
+    nombre: { type: String, required: true },
+    email: { type: String, required: true, unique: true },
+    plan: { type: String, enum: ['Gratis', 'Premium'], default: 'Gratis' },
+    totalTiradas: { type: Number, default: 0 },
+    ultimaConexion: { type: String, default: () => new Date().toISOString().split('T')[0] }
+}, { timestamps: true });
+
+const Usuario = mongoose.models.Usuario || mongoose.model('Usuario', UsuarioSchema);
+
+// ==========================================
+// 3. CONFIGURACION GROQ
+// ==========================================
+// openai/gpt-oss-20b: modelo de razonamiento, genera <think> tags
+// Necesitamos muchos tokens para que piense y luego responda
+const MODEL_NAME = process.env.MODEL_NAME || 'openai/gpt-oss-20b';
+const API_KEY = process.env.GROQ_API_KEY || process.env.API_KEY;
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
+
+console.log('CONFIG SERVIDOR:');
+console.log('  MODEL_NAME:', MODEL_NAME);
+console.log('  API_KEY existe:', !!API_KEY);
+console.log('  ADMIN_TOKEN existe:', !!ADMIN_TOKEN);
+
+// ==========================================
+// MIDDLEWARE DE ADMIN
+// ==========================================
+function verificarAdmin(req, res, next) {
+    const token = req.headers['x-admin-token'];
+    if (!ADMIN_TOKEN) {
+        return res.status(500).json({ error: 'Configuracion incompleta.' });
+    }
+    if (!token || token !== ADMIN_TOKEN) {
+        return res.status(403).json({ error: 'Acceso denegado.' });
+    }
+    next();
+}
+
+// ==========================================
+// FUNCION: EXTRAER RESPUESTA REAL
+// ==========================================
+// gpt-oss genera <think>...</think> con el razonamiento interno.
+// La respuesta real viene DESPUES del </think>.
+function extraerRespuesta(texto) {
+    if (!texto) return '';
+
+    // Estrategia 1: Buscar </think> y tomar todo lo que viene despues
+    const idxCierre = texto.lastIndexOf('</think>');
+    if (idxCierre !== -1) {
+        const despues = texto.substring(idxCierre + 8).trim();
+        if (despues.length > 20) {
+            console.log('  Respuesta extraida despues de </think> (', despues.length, 'chars)');
+            return despues;
+        }
+    }
+
+    // Estrategia 2: Buscar <think> y cortar todo desde ahi hasta el cierre
+    const idxApertura = texto.indexOf('<think>');
+    if (idxApertura !== -1) {
+        const antes = texto.substring(0, idxApertura).trim();
+        const despuesDelTag = texto.substring(idxApertura + 7);
+        const idxCierre2 = despuesDelTag.indexOf('</think>');
+        if (idxCierre2 !== -1) {
+            const despues = despuesDelTag.substring(idxCierre2 + 8).trim();
+            if (despues.length > 20) {
+                console.log('  Respuesta extraida despues de </think> v2 (', despues.length, 'chars)');
+                return despues;
+            }
+        }
+        // Si no hay cierre, devolver lo que hay antes del <think>
+        if (antes.length > 20) {
+            console.log('  Solo contenido antes de <think> (', antes.length, 'chars)');
+            return antes;
+        }
+    }
+
+    // Estrategia 3: Buscar donde empieza la respuesta real (HTML o texto en espanol)
+    const idxDiv = texto.indexOf('<div');
+    if (idxDiv !== -1) {
+        return texto.substring(idxDiv);
+    }
+
+    // Estrategia 4: Buscar palabras clave de respuesta
+    const palabrasClave = ['Conclusion', 'Prediccion', 'Dupla', 'Presente', 'Futuro', 'El camino', 'Debes', 'La situacion', 'Las cartas'];
+    for (const palabra of palabrasClave) {
+        const idx = texto.indexOf(palabra);
+        if (idx !== -1 && idx < texto.length - 30) {
+            return texto.substring(idx);
+        }
+    }
+
+    return texto.trim();
+}
+
+// ==========================================
+// ENDPOINT: TIRADA
 // ==========================================
 app.post('/tirada', async (req, res) => {
     console.log('\n=== NUEVA PETICION /tirada ===');
@@ -21,102 +155,65 @@ app.post('/tirada', async (req, res) => {
 
     try {
         const preguntaLimpia = (pregunta && typeof pregunta === 'string') ? pregunta.trim().slice(0, 300) : '';
-
-        // Detección de Modos
+        const esPreguntaEspecifica = (tema === 'Pregunta Especifica' || tema === 'Pregunta Especifica') && preguntaLimpia.length > 0;
         const esModoGratis = modo === 'gratis';
-        const esFisicoTecnico = estilo === 'fisico_tecnico' || estilo === 'tecnico' || estilo === 'manual';
-        const esFisicoPredictivo = estilo === 'fisico_predictivo' || estilo === 'predictivo';
-        const esMagico = estilo === 'magico' || estilo === 'morgana';
 
         let systemPrompt = '';
         let userPrompt = '';
 
-        // 1. MODO GRATUITO (Respuesta mística, concisa)
         if (esModoGratis) {
-            systemPrompt = `Eres Morgana, experta lectora de Tarot. Tono místico, directo y predictivo.
+            systemPrompt = `Eres Morgana, experta lectora de Tarot. Tono mistico, directo y predictivo.
 Responde SOLO con 2 secciones HTML con class="reading-section".
-Cada sección debe ser concisa y al grano.
-NO saludes. NO uses asteriscos ni markdown. Usa HTML puro.`;
+Cada seccion debe tener al menos 3 oraciones completas.
+NO saludes. NO uses asteriscos ni markdown.`;
 
             userPrompt = `Pregunta: "${preguntaLimpia || 'Consulta general'}"
 Dupla 1 (Presente): ${a} y ${b}
 Dupla 2 (Futuro): ${c} y ${d}
 
-Responde en español. 
-Sección 1 (<h3>Conclusión</h3>) = Breve conclusión del presente.
-Sección 2 (<h3>Predicción</h3>) = Breve predicción del futuro.`;
+Responde en espanol. Seccion 1 = CONCLUSION sobre la pregunta. Seccion 2 = PREDICCION.`;
 
-        // 2. MÓDULO PROFESIONAL - MAZO FÍSICO TÉCNICO
-        } else if (esFisicoTecnico) {
-            systemPrompt = `Actúas como Diccionario Técnico de Tarot para profesionales. Tono neutral, analítico y directo.
+        } else if (estilo === 'manual') {
+            systemPrompt = `Actua como diccionario tecnico de Tarot. Tono neutro y analitico.
 Responde SOLO con 2 secciones HTML con class="reading-section".
-NO relaciones las cartas entre sí en la sección individual para que la síntesis la haga el usuario.
-NO saludes. NO uses asteriscos ni markdown. Usa HTML puro (<h3>, <ul>, <li>, <p>).`;
+Cada seccion debe tener al menos 3 oraciones completas.
+NO uses asteriscos ni markdown.`;
 
-            userPrompt = `Tirada de Mazo Físico (Técnica):
-${preguntaLimpia ? `Pregunta: "${preguntaLimpia}"` : `Tema: ${tema || 'General'}`}
-Carta A: ${a} | Carta B: ${b} | Carta C: ${c} | Carta D: ${d}
+            if (esPreguntaEspecifica) {
+                userPrompt = `Pregunta: "${preguntaLimpia}"
+Dupla 1 (Presente): ${a} y ${b} -> Significado conjunto sobre la pregunta.
+Dupla 2 (Futuro): ${c} y ${d} -> Significado conjunto sobre la pregunta.
 
-Sigue ESTRICTAMENTE esta estructura HTML:
+Solo significados conjuntos de cada dupla. No carta por carta.`;
+            } else {
+                userPrompt = `Tema: ${tema}
+Dupla 1 (Presente): ${a} y ${b} -> Significado conjunto.
+Dupla 2 (Futuro): ${c} y ${d} -> Significado conjunto.
 
-<div class="reading-section">
-  <h3>Significados Directos por Dupla</h3>
-  <p><strong>Dupla 1 (${a} + ${b}):</strong></p>
-  <ul>
-    <li>[Significado directo 1 de la combinación]</li>
-    <li>[Significado directo 2 de la combinación]</li>
-    <li>[Significado directo 3 de la combinación]</li>
-  </ul>
-  <p><strong>Dupla 2 (${c} + ${d}):</strong></p>
-  <ul>
-    <li>[Significado directo 1 de la combinación]</li>
-    <li>[Significado directo 2 de la combinación]</li>
-    <li>[Significado directo 3 de la combinación]</li>
-  </ul>
-</div>
+Solo significados conjuntos.`;
+            }
 
-<div class="reading-section">
-  <h3>Significados Individuales (Aislados)</h3>
-  <p><strong>${a}:</strong> 2 o 3 palabras clave del arcano aislado.</p>
-  <p><strong>${b}:</strong> 2 o 3 palabras clave del arcano aislado.</p>
-  <p><strong>${c}:</strong> 2 o 3 palabras clave del arcano aislado.</p>
-  <p><strong>${d}:</strong> 2 o 3 palabras clave del arcano aislado.</p>
-</div>`;
-
-        // 3. MÓDULO PROFESIONAL - MAZO FÍSICO PREDICTIVO
-        } else if (esFisicoPredictivo) {
-            systemPrompt = `Eres un Tarotista Profesional. Tono místico, fluido, predictivo y detallado.
-Responde SOLO con 2 secciones HTML con class="reading-section".
-Proporciona una lectura rica, amplia y bien desarrollada por duplas (más extensa que una tirada rápida).
-NO saludes. NO uses asteriscos ni markdown. Usa HTML puro.`;
-
-            userPrompt = `Consulta Profesional (Mazo Físico Predictivo)
-${preguntaLimpia ? `Pregunta: "${preguntaLimpia}"` : `Tema: ${tema || 'General'}`}
-Dupla 1 (Presente / Origen): ${a} y ${b}
-Dupla 2 (Futuro / Desenlace): ${c} y ${d}
-
-Sección 1 (<h3>Análisis del Presente</h3>) = Interpretación mística detallada y fluida de la Dupla 1.
-Sección 2 (<h3>Predicción y Desenlace</h3>) = Revelación predictiva extendida y consejo para el futuro basado en la Dupla 2.`;
-
-        // 4. ESTILO MÁGICO (Lectura Digital)
-        } else if (esMagico) {
-            systemPrompt = `Eres Morgana, lectora de Tarot. Tono místico, intuitivo y directo.
-Responde SOLO con 2 secciones HTML con class="reading-section".
-NO saludes. NO uses asteriscos ni markdown. Usa HTML puro.`;
-
-            userPrompt = `Tema/Pregunta: "${preguntaLimpia || tema || 'General'}"
-Dupla 1 (Presente): ${a} y ${b} -> Interpretación mística conjunta.
-Dupla 2 (Futuro): ${c} y ${d} -> Interpretación mística conjunta.`;
-
-        // 5. ESTILO FILOSÓFICO (Lectura Digital Por Defecto)
         } else {
-            systemPrompt = `Eres un Terapeuta de Tarot Evolutivo. Tono reflexivo, empático e integrador.
-Responde SOLO con 2 secciones HTML con class="reading-section".
-NO saludes. NO uses asteriscos ni markdown. Usa HTML puro.`;
+            const personalidad = (estilo === 'morgana' || estilo === 'magico')
+                ? 'Eres Morgana, lectora de Tarot. Tono mistico, directo y predictivo. Respuestas concretas, no genericas.'
+                : 'Eres terapeuta de Tarot Evolutivo. Tono reflexivo y empatico. Interpretaciones profundas pero concretas.';
 
-            userPrompt = `Tema/Pregunta: "${preguntaLimpia || tema || 'General'}"
-Dupla 1 (Espejo del Presente): ${a} y ${b} -> Análisis evolutivo conjunto.
-Dupla 2 (Camino de Aprendizaje): ${c} y ${d} -> Análisis evolutivo conjunto.`;
+            systemPrompt = `${personalidad}
+Responde SOLO con 2 secciones HTML con class="reading-section".
+Cada seccion debe tener al menos 3 oraciones completas.
+NO uses asteriscos ni markdown.`;
+
+            if (esPreguntaEspecifica) {
+                userPrompt = `Pregunta: "${preguntaLimpia}"
+Dupla 1 (Presente): ${a} y ${b} -> Interpretacion conjunta sobre la pregunta.
+Dupla 2 (Futuro): ${c} y ${d} -> Interpretacion conjunta sobre la pregunta.
+
+Responde DIRECTAMENTE a la pregunta. Conecta cada dupla con la duda especifica.`;
+            } else {
+                userPrompt = `Tema: ${tema}
+Dupla 1 (Presente): ${a} y ${b} -> Interpretacion conjunta.
+Dupla 2 (Futuro): ${c} y ${d} -> Interpretacion conjunta.`;
+            }
         }
 
         console.log('Llamando a Groq... Modelo:', MODEL_NAME);
@@ -139,6 +236,8 @@ Dupla 2 (Camino de Aprendizaje): ${c} y ${d} -> Análisis evolutivo conjunto.`;
         });
 
         const data = await response.json();
+        console.log('Status Groq:', response.status);
+        if (data.error) console.log('Error Groq:', data.error.message);
 
         if (!response.ok || !data.choices || data.choices.length === 0) {
             return res.status(500).json({
@@ -148,15 +247,18 @@ Dupla 2 (Camino de Aprendizaje): ${c} y ${d} -> Análisis evolutivo conjunto.`;
         }
 
         const raw = data.choices[0].message?.content || '';
-        let text = extraerRespuesta(raw);
+        console.log('Raw length:', raw.length);
+        console.log('Raw primeros 200:', raw.substring(0, 200).replace(/\n/g, ' '));
 
-        // Fallback dinámico según el modo
+        let text = extraerRespuesta(raw);
+        console.log('Limpio length:', text.length);
+        console.log('Limpio primeros 200:', text.substring(0, 200).replace(/\n/g, ' '));
+
         if (!text || text.length < 30) {
-            if (esFisicoTecnico) {
-                text = `<div class="reading-section"><h3>Significados Directos</h3><p><strong>Dupla 1 (${a} + ${b}):</strong> Bloqueos actuales, necesidad de análisis, transformación paulatina.</p><p><strong>Dupla 2 (${c} + ${d}):</strong> Nuevas oportunidades, resolución favorable, decisiones importantes.</p></div><div class="reading-section"><h3>Significados Individuales</h3><p><strong>${a}:</strong> Inicio, voluntad, potencial.</p><p><strong>${b}:</strong> Intuición, misterio, paciencia.</p><p><strong>${c}:</strong> Cambio, transición, movimiento.</p><p><strong>${d}:</strong> Éxito, claridad, realización.</p></div>`;
-            } else {
-                text = `<div class="reading-section"><h3>Presente</h3><p>La dupla ${a} y ${b} indica que la situación actual requiere atención y reflexión sobre los aspectos fundamentales.</p></div><div class="reading-section"><h3>Futuro</h3><p>La dupla ${c} y ${d} revela una evolución significativa que aportará perspectiva y nuevos caminos.</p></div>`;
-            }
+            console.warn('Fallback activado');
+            text = esModoGratis 
+                ? `<div class="reading-section"><h3>Conclusion</h3><p>La dupla ${a} y ${b} indica que la situacion actual requiere atencion y reflexion profunda. Hay energias presentes que piden ser comprendidas antes de tomar cualquier decision importante.</p></div><div class="reading-section"><h3>Prediccion</h3><p>La dupla ${c} y ${d} revela un cambio significativo en el horizonte que traera nuevas oportunidades de crecimiento y transformacion.</p></div>`
+                : `<div class="reading-section"><h3>Dupla 1: Presente</h3><p>La combinacion de ${a} y ${b} revela una energia actual intensa que pide ser comprendida en su conjunto. Hay dinamicas ocultas que influyen en la situacion y requieren atencion.</p></div><div class="reading-section"><h3>Dupla 2: Futuro</h3><p>La dupla ${c} y ${d} indica una evolucion importante que transformara la situacion de manera significativa, abriendo nuevos caminos.</p></div>`;
         }
 
         return res.json({ lectura: text });
@@ -165,4 +267,157 @@ Dupla 2 (Camino de Aprendizaje): ${c} y ${d} -> Análisis evolutivo conjunto.`;
         console.error('ERROR:', error.message);
         return res.status(500).json({ error: 'Error interno', detalles: error.message });
     }
+});
+
+// ==========================================
+// ENDPOINT: REPREGUNTA
+// ==========================================
+app.post('/repregunta', async (req, res) => {
+    const { cartas, repregunta, estilo = 'filosofico' } = req.body;
+
+    if (!repregunta || typeof repregunta !== 'string' || repregunta.trim().length === 0) {
+        return res.status(400).json({ error: 'Falta la repregunta.' });
+    }
+
+    if (!API_KEY) {
+        return res.status(500).json({ error: 'API Key no configurada.' });
+    }
+
+    try {
+        const personalidad = estilo === 'manual' ? 'Oraculo analitico de Tarot.'
+            : (estilo === 'morgana' || estilo === 'magico') ? 'Morgana, lectora mistica.'
+            : 'Terapeuta de Tarot Evolutivo.';
+
+        const a = cartas?.a || '';
+        const b = cartas?.b || '';
+        const c = cartas?.c || '';
+        const d = cartas?.d || '';
+
+        const systemPrompt = `${personalidad}
+Responde con HTML simple. Al menos 3 oraciones completas.
+NO uses asteriscos ni markdown.`;
+
+        const userPrompt = `Cartas de la tirada: ${a} y ${b} (presente), ${c} y ${d} (futuro).
+Nueva pregunta: ${repregunta.trim().slice(0, 300)}
+
+Responde directo a la pregunta.`;
+
+        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${API_KEY}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: MODEL_NAME,
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userPrompt }
+                ],
+                temperature: 0.7,
+                max_tokens: 2048
+            })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok || !data.choices || data.choices.length === 0) {
+            return res.status(500).json({ error: 'Error en la API de IA' });
+        }
+
+        let respuesta = extraerRespuesta(data.choices[0].message?.content || '');
+        if (!respuesta || respuesta.length < 20) {
+            respuesta = '<p>Las cartas sugieren reflexionar profundamente sobre este aspecto antes de tomar una decision.</p>';
+        }
+
+        return res.json({ respuesta });
+
+    } catch (error) {
+        console.error('Error repregunta:', error);
+        return res.status(500).json({ error: 'Error en repregunta.' });
+    }
+});
+
+// ==========================================
+// ENDPOINT: REGISTRAR USUARIO
+// ==========================================
+app.post('/api/usuarios/registrar', async (req, res) => {
+    const { nombre, email } = req.body;
+    if (!email || typeof email !== 'string') return res.status(400).json({ error: 'El email es requerido.' });
+
+    try {
+        const hoy = new Date().toISOString().split('T')[0];
+        const emailLimpio = email.toLowerCase().trim();
+
+        const usuario = await Usuario.findOneAndUpdate(
+            { email: emailLimpio },
+            {
+                $inc: { totalTiradas: 1 },
+                $set: { ultimaConexion: hoy },
+                $setOnInsert: { nombre: (nombre && typeof nombre === 'string') ? nombre.trim() : 'Consultante', plan: 'Gratis' }
+            },
+            { new: true, upsert: true }
+        );
+        return res.json({ mensaje: 'Usuario registrado', usuario });
+    } catch (error) {
+        console.error('Error al registrar:', error.message);
+        return res.status(500).json({ error: 'Error al procesar usuario.' });
+    }
+});
+
+// ==========================================
+// ENDPOINTS DE ADMIN
+// ==========================================
+app.get('/api/admin/clientes', verificarAdmin, async (req, res) => {
+    try {
+        const clientes = await Usuario.find({}, { __v: 0 }).sort({ createdAt: -1 }).limit(100);
+        res.json({ clientes });
+    } catch (error) {
+        console.error('Error en /api/admin/clientes:', error);
+        res.status(500).json({ error: 'Error al obtener clientes' });
+    }
+});
+
+app.post('/api/admin/cambiar-plan', verificarAdmin, async (req, res) => {
+    const { userId, nuevoPlan } = req.body;
+
+    if (!userId || !nuevoPlan) {
+        return res.status(400).json({ error: 'Faltan userId o nuevoPlan' });
+    }
+    if (!['Gratis', 'Premium'].includes(nuevoPlan)) {
+        return res.status(400).json({ error: 'Plan invalido. Use Gratis o Premium' });
+    }
+
+    try {
+        let filtro;
+        const idString = String(userId).trim();
+
+        if (mongoose.Types.ObjectId.isValid(idString)) {
+            filtro = { _id: idString };
+        } else {
+            filtro = { email: idString.toLowerCase() };
+        }
+
+        const usuario = await Usuario.findOneAndUpdate(
+            filtro,
+            { $set: { plan: nuevoPlan } },
+            { new: true }
+        );
+
+        if (!usuario) {
+            return res.status(404).json({ error: 'Usuario no encontrado' });
+        }
+        res.json({ mensaje: `Plan actualizado a ${nuevoPlan}`, usuario });
+    } catch (error) {
+        console.error('Error en /api/admin/cambiar-plan:', error);
+        res.status(500).json({ error: 'Error al cambiar plan' });
+    }
+});
+
+// ==========================================
+// SERVIDOR
+// ==========================================
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+    console.log(`Servidor corriendo en puerto ${PORT}`);
 });
