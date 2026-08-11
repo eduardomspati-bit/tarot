@@ -1,4 +1,4 @@
-const express = require('express');
+server_completo = '''const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
 require('dotenv').config();
@@ -10,7 +10,7 @@ const corsOptions = {
         'https://tarot-ia.netlify.app',
         'https://tarotia-app-psi.github.io',
         'http://localhost:3000',
-        'http://127.0.0.1:5500' // 👈 La coma que faltaba va acá si hay más elementos
+        'http://127.0.0.1:5500'
     ],
     methods: ['GET', 'POST', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'x-admin-token'],
@@ -18,7 +18,7 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.options('*', cors(corsOptions)); // 👈 Agregá esta línea para manejar las verificaciones previas (preflight)
+app.options('*', cors(corsOptions));
 app.use(express.json());
 app.use(express.static(__dirname));
 
@@ -51,8 +51,6 @@ const Usuario = mongoose.models.Usuario || mongoose.model('Usuario', UsuarioSche
 // ==========================================
 // 3. CONFIGURACION GROQ
 // ==========================================
-// openai/gpt-oss-20b: modelo de razonamiento, genera <think> tags
-// Necesitamos muchos tokens para que piense y luego responda
 const MODEL_NAME = process.env.MODEL_NAME || 'openai/gpt-oss-20b';
 const API_KEY = process.env.GROQ_API_KEY || process.env.API_KEY;
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
@@ -79,12 +77,9 @@ function verificarAdmin(req, res, next) {
 // ==========================================
 // FUNCION: EXTRAER RESPUESTA REAL
 // ==========================================
-// gpt-oss genera <think>...</think> con el razonamiento interno.
-// La respuesta real viene DESPUES del </think>.
 function extraerRespuesta(texto) {
     if (!texto) return '';
 
-    // Estrategia 1: Buscar </think> y tomar todo lo que viene despues
     const idxCierre = texto.lastIndexOf('</think>');
     if (idxCierre !== -1) {
         const despues = texto.substring(idxCierre + 8).trim();
@@ -94,7 +89,6 @@ function extraerRespuesta(texto) {
         }
     }
 
-    // Estrategia 2: Buscar <think> y cortar todo desde ahi hasta el cierre
     const idxApertura = texto.indexOf('<think>');
     if (idxApertura !== -1) {
         const antes = texto.substring(0, idxApertura).trim();
@@ -107,26 +101,19 @@ function extraerRespuesta(texto) {
                 return despues;
             }
         }
-        // Si no hay cierre, devolver lo que hay antes del <think>
         if (antes.length > 20) {
             console.log('  Solo contenido antes de <think> (', antes.length, 'chars)');
             return antes;
         }
     }
 
-    // Estrategia 3: Buscar donde empieza la respuesta real (HTML o texto en espanol)
     const idxDiv = texto.indexOf('<div');
-    if (idxDiv !== -1) {
-        return texto.substring(idxDiv);
-    }
+    if (idxDiv !== -1) return texto.substring(idxDiv);
 
-    // Estrategia 4: Buscar palabras clave de respuesta
-    const palabrasClave = ['Conclusion', 'Prediccion', 'Dupla', 'Presente', 'Futuro', 'El camino', 'Debes', 'La situacion', 'Las cartas'];
+    const palabrasClave = ['Conclusion', 'Prediccion', 'Dupla', 'Presente', 'Futuro', 'Significado', 'El camino', 'Debes', 'La situacion', 'Las cartas'];
     for (const palabra of palabrasClave) {
         const idx = texto.indexOf(palabra);
-        if (idx !== -1 && idx < texto.length - 30) {
-            return texto.substring(idx);
-        }
+        if (idx !== -1 && idx < texto.length - 30) return texto.substring(idx);
     }
 
     return texto.trim();
@@ -136,7 +123,7 @@ function extraerRespuesta(texto) {
 // ENDPOINT: TIRADA
 // ==========================================
 app.post('/tirada', async (req, res) => {
-    console.log('\n=== NUEVA PETICION /tirada ===');
+    console.log('\\n=== NUEVA PETICION /tirada ===');
     console.log('Body:', JSON.stringify(req.body));
 
     let { tema, a, b, c, d, estilo = 'filosofico', pregunta, cartas, modo } = req.body;
@@ -161,6 +148,7 @@ app.post('/tirada', async (req, res) => {
         let systemPrompt = '';
         let userPrompt = '';
 
+        // ========== MODO GRATIS ==========
         if (esModoGratis) {
             systemPrompt = `Eres Morgana, experta lectora de Tarot. Tono mistico, directo y predictivo.
 Responde SOLO con 2 secciones HTML con class="reading-section".
@@ -173,6 +161,60 @@ Dupla 2 (Futuro): ${c} y ${d}
 
 Responde en espanol. Seccion 1 = CONCLUSION sobre la pregunta. Seccion 2 = PREDICCION.`;
 
+        // ========== MAZO FISICO PREDICTIVO ==========
+        } else if (estilo === 'predictivo_fisico') {
+            systemPrompt = `Eres Morgana, experta lectora de Tarot. Tono mistico, directo y predictivo.
+Responde SOLO con 2 secciones HTML con class="reading-section".
+Cada seccion debe tener al menos 4 oraciones completas (mas extensa que una consulta rapida).
+NO saludes. NO uses asteriscos ni markdown.
+Interpreta cada dupla como UNIDAD INDIVISIBLE (no carta por carta).`;
+
+            if (esPreguntaEspecifica) {
+                userPrompt = `Pregunta: "${preguntaLimpia}"
+Dupla 1 (Presente / Estado actual): ${a} y ${b}
+Dupla 2 (Futuro / Evolucion): ${c} y ${d}
+
+Responde en espanol. Seccion 1 = CONCLUSION sobre la pregunta usando la Dupla 1. Seccion 2 = PREDICCION usando la Dupla 2.
+Cada seccion debe ser extensa y desarrollada, minimo 4 oraciones.`;
+            } else {
+                userPrompt = `Tema: ${tema || 'Consulta general'}
+Dupla 1 (Presente / Estado actual): ${a} y ${b}
+Dupla 2 (Futuro / Evolucion): ${c} y ${d}
+
+Responde en espanol. Seccion 1 = CONCLUSION sobre la situacion actual usando la Dupla 1. Seccion 2 = PREDICCION usando la Dupla 2.
+Cada seccion debe ser extensa y desarrollada, minimo 4 oraciones.`;
+            }
+
+        // ========== MAZO FISICO TECNICO ==========
+        } else if (estilo === 'tarotista_fisico' || estilo === 'tecnico_fisico') {
+            systemPrompt = `Eres un diccionario tecnico de Tarot. Tono neutro, objetivo y didactico.
+Responde SOLO con HTML usando class="reading-section" para cada seccion.
+NO interpretes las duplas entre si. Cada dupla es independiente.
+NO saludes. NO uses asteriscos ni markdown.`;
+
+            userPrompt = `Tema: ${tema || 'Consulta general'}
+
+SIGNIFICADO DE LA DUPLA 1 (sin relacionar con la Dupla 2):
+- Cartas: ${a} y ${b}
+- Significado conjunto de estas dos cartas como unidad:
+
+SIGNIFICADO DE LA DUPLA 2 (sin relacionar con la Dupla 1):
+- Cartas: ${c} y ${d}
+- Significado conjunto de estas dos cartas como unidad:
+
+SIGNIFICADO INDIVIDUAL DE CADA CARTA (para que el lector relacione):
+- ${a}: significado individual
+- ${b}: significado individual
+- ${c}: significado individual
+- ${d}: significado individual
+
+Responde en espanol con 4 secciones HTML:
+1. Dupla 1: significado conjunto
+2. Dupla 2: significado conjunto
+3. Carta por carta: significados individuales
+4. Nota tecnica: como el lector puede relacionar estas cartas segun su intuicion.`;
+
+        // ========== MODO MANUAL ==========
         } else if (estilo === 'manual') {
             systemPrompt = `Actua como diccionario tecnico de Tarot. Tono neutro y analitico.
 Responde SOLO con 2 secciones HTML con class="reading-section".
@@ -193,6 +235,7 @@ Dupla 2 (Futuro): ${c} y ${d} -> Significado conjunto.
 Solo significados conjuntos.`;
             }
 
+        // ========== MODO NORMAL (magico/filosofico) ==========
         } else {
             const personalidad = (estilo === 'morgana' || estilo === 'magico')
                 ? 'Eres Morgana, lectora de Tarot. Tono mistico, directo y predictivo. Respuestas concretas, no genericas.'
@@ -248,11 +291,11 @@ Dupla 2 (Futuro): ${c} y ${d} -> Interpretacion conjunta.`;
 
         const raw = data.choices[0].message?.content || '';
         console.log('Raw length:', raw.length);
-        console.log('Raw primeros 200:', raw.substring(0, 200).replace(/\n/g, ' '));
+        console.log('Raw primeros 200:', raw.substring(0, 200).replace(/\\n/g, ' '));
 
         let text = extraerRespuesta(raw);
         console.log('Limpio length:', text.length);
-        console.log('Limpio primeros 200:', text.substring(0, 200).replace(/\n/g, ' '));
+        console.log('Limpio primeros 200:', text.substring(0, 200).replace(/\\n/g, ' '));
 
         if (!text || text.length < 30) {
             console.warn('Fallback activado');
