@@ -168,11 +168,8 @@ Responde en espanol. Seccion 1 = CONCLUSION sobre la pregunta. Seccion 2 = PREDI
             // ==========================================
             // MAZO FISICO TECNICO / ESTRUCTURAL
             // ==========================================
-            systemPrompt = `Actua como diccionario tecnico de Tarot. Tono neutro, descriptivo y analitico.
-Responde SOLO con 2 secciones HTML con class="reading-section".
-Cada seccion debe listar exactamente 3 significados en parrafos <p>.
-NO interpretes las duplas entre si. NO hagas analisis conjunto.
-NO uses asteriscos ni markdown. Solo descripciones objetivas.`;
+            systemPrompt = `Dar 3 significados posibles de cada dupla 1 y 3 significados posibles de dupla 2.
+            no relacionar entre las duplas`;
 
             if (esPreguntaEspecifica) {
                 userPrompt = `Pregunta del usuario: "${preguntaLimpia}"
