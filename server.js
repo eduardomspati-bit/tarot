@@ -28,7 +28,7 @@ app.use(express.static(__dirname));
 // CONFIGURACIÓN
 // ==========================================
 const MONGO_URI = process.env.MONGO_URI;
-const MODEL_NAME = process.env.MODEL_NAME || 'llama3-8b-8192';
+const MODEL_NAME = process.env.MODEL_NAME || 'openai/gpt-oss-20b';
 const API_KEY = process.env.GROQ_API_KEY || process.env.API_KEY;
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
 const JWT_SECRET = process.env.JWT_SECRET || 'tarotia-secret-key-2026';
