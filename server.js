@@ -28,7 +28,7 @@ app.use(express.static(__dirname));
 // CONFIGURACIÓN
 // ==========================================
 const MONGO_URI = process.env.MONGO_URI;
-const MODEL_NAME = process.env.MODEL_NAME || 'openai/gpt-oss-20b';
+const MODEL_NAME = process.env.MODEL_NAME || 'llama3-8b-8192';
 const API_KEY = process.env.GROQ_API_KEY || process.env.API_KEY;
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
 const JWT_SECRET = process.env.JWT_SECRET || 'tarotia-secret-key-2026';
@@ -113,7 +113,6 @@ app.post('/api/auth/registrar', async (req, res) => {
     try {
         let usuario = await Usuario.findOne({ email: emailLimpio });
         if (usuario) {
-            // Si ya existe, solo actualizamos y devolvemos token
             usuario.nombre = nombreLimpio;
             usuario.ultimaConexion = new Date().toISOString().split('T')[0];
             await usuario.save();
@@ -224,7 +223,6 @@ app.post('/api/auth/canjear-codigo', verificarAuth, async (req, res) => {
     const codigoLimpio = codigo.trim().toUpperCase();
 
     try {
-        // Codigos admin hardcodeados (siempre validos)
         const codigosAdmin = ['ADMIN2026', 'PASEMISTICO', 'TAROTGRATIS'];
 
         if (codigosAdmin.includes(codigoLimpio)) {
@@ -253,7 +251,6 @@ app.post('/api/auth/canjear-codigo', verificarAuth, async (req, res) => {
             });
         }
 
-        // Codigos dinamicos de la base de datos
         const codigoDB = await CodigoPremium.findOne({ codigo: codigoLimpio });
         if (!codigoDB) return res.status(400).json({ error: 'Codigo invalido.' });
         if (codigoDB.usado) return res.status(400).json({ error: 'Codigo ya utilizado.' });
