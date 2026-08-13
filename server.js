@@ -76,6 +76,21 @@ const CodigoPremiumSchema = new mongoose.Schema({
 const CodigoPremium = mongoose.models.CodigoPremium || mongoose.model('CodigoPremium', CodigoPremiumSchema);
 
 // ==========================================
+// MODELO: DUPLAS ESTRUCTURALES
+// ==========================================
+const DuplaSchema = new mongoose.Schema({
+    cartaA: { type: String, required: true },
+    cartaB: { type: String, required: true },
+    significado: { type: String, required: true },
+    keywords: [{ type: String }]
+}, { timestamps: true });
+
+// Índice compuesto para búsquedas rápidas (orden importa)
+DuplaSchema.index({ cartaA: 1, cartaB: 1 }, { unique: true });
+
+const Dupla = mongoose.models.Dupla || mongoose.model('Dupla', DuplaSchema);
+
+// ==========================================
 // MIDDLEWARE
 // ==========================================
 function verificarAdmin(req, res, next) {
@@ -385,17 +400,7 @@ function extraerRespuesta(texto) {
 
     return texto.trim();
 }
-// ==========================================
-// MODELO: DUPLAS ESTRUCTURALES
-// ==========================================
-const DuplaSchema = new mongoose.Schema({
-    cartaA: { type: String, required: true },
-    cartaB: { type: String, required: true },
-    significado: { type: String, required: true },
-    keywords: [{ type: String }]
-}, { timestamps: true });
 
-const Dupla = mongoose.models.Dupla || mongoose.model('Dupla', DuplaSchema);
 // ==========================================
 // ENDPOINT: TIRADA
 // ==========================================
@@ -631,7 +636,94 @@ Responde directo a la pregunta.`;
 });
 
 // ==========================================
-// ENDPOINTS DE ADMIN
+// ENDPOINTS: DUPLAS ESTRUCTURALES (BASE DE DATOS)
+// ==========================================
+
+// Buscar significado de una dupla (ORDEN IMPORTA)
+app.get('/api/duplas/buscar', async (req, res) => {
+    const { a, b } = req.query;
+    if (!a || !b) return res.status(400).json({ error: 'Faltan cartas.' });
+
+    try {
+        const dupla = await Dupla.findOne({ cartaA: a, cartaB: b });
+        if (!dupla) {
+            return res.json({ encontrada: false, mensaje: 'Dupla no cargada aún.' });
+        }
+        res.json({
+            encontrada: true,
+            significado: dupla.significado,
+            keywords: dupla.keywords
+        });
+    } catch (error) {
+        console.error('Error buscando dupla:', error);
+        res.status(500).json({ error: 'Error al buscar dupla.' });
+    }
+});
+
+// Crear/actualizar dupla (admin)
+app.post('/api/admin/duplas', verificarAdmin, async (req, res) => {
+    const { cartaA, cartaB, significado, keywords } = req.body;
+    if (!cartaA || !cartaB || !significado) {
+        return res.status(400).json({ error: 'Faltan datos: cartaA, cartaB y significado son obligatorios.' });
+    }
+
+    try {
+        const dupla = await Dupla.findOneAndUpdate(
+            { cartaA, cartaB },
+            { cartaA, cartaB, significado, keywords: keywords || [] },
+            { upsert: true, new: true }
+        );
+        res.json({ mensaje: 'Dupla guardada correctamente', dupla });
+    } catch (error) {
+        console.error('Error guardando dupla:', error);
+        res.status(500).json({ error: 'Error al guardar dupla.' });
+    }
+});
+
+// Listar duplas existentes (admin) con paginación opcional
+app.get('/api/admin/duplas', verificarAdmin, async (req, res) => {
+    try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 100;
+        const skip = (page - 1) * limit;
+
+        const [duplas, total] = await Promise.all([
+            Dupla.find().sort({ cartaA: 1, cartaB: 1 }).skip(skip).limit(limit),
+            Dupla.countDocuments()
+        ]);
+
+        res.json({ 
+            total, 
+            page, 
+            pages: Math.ceil(total / limit),
+            duplas 
+        });
+    } catch (error) {
+        console.error('Error listando duplas:', error);
+        res.status(500).json({ error: 'Error al listar duplas.' });
+    }
+});
+
+// Eliminar dupla (admin)
+app.delete('/api/admin/duplas', verificarAdmin, async (req, res) => {
+    const { cartaA, cartaB } = req.body;
+    if (!cartaA || !cartaB) {
+        return res.status(400).json({ error: 'Faltan cartas para eliminar.' });
+    }
+
+    try {
+        const resultado = await Dupla.findOneAndDelete({ cartaA, cartaB });
+        if (!resultado) {
+            return res.status(404).json({ error: 'Dupla no encontrada.' });
+        }
+        res.json({ mensaje: `Dupla ${cartaA} | ${cartaB} eliminada.` });
+    } catch (error) {
+        res.status(500).json({ error: 'Error al eliminar dupla.' });
+    }
+});
+
+// ==========================================
+// ENDPOINTS DE ADMIN (USUARIOS)
 // ==========================================
 app.get('/api/admin/clientes', verificarAdmin, async (req, res) => {
     try {
@@ -693,54 +785,7 @@ app.post('/api/admin/crear-codigo', verificarAdmin, async (req, res) => {
         res.status(500).json({ error: 'Error al crear codigo.' });
     }
 });
-// Buscar significado de una dupla (ORDEN IMPORTA)
-app.get('/api/duplas/buscar', async (req, res) => {
-    const { a, b } = req.query;
-    if (!a || !b) return res.status(400).json({ error: 'Faltan cartas.' });
 
-    try {
-        const dupla = await Dupla.findOne({ cartaA: a, cartaB: b });
-        if (!dupla) {
-            return res.json({ encontrada: false, mensaje: 'Dupla no cargada aún.' });
-        }
-        res.json({
-            encontrada: true,
-            significado: dupla.significado,
-            keywords: dupla.keywords
-        });
-    } catch (error) {
-        res.status(500).json({ error: 'Error al buscar dupla.' });
-    }
-});
-
-// Crear/actualizar dupla (admin)
-app.post('/api/admin/duplas', verificarAdmin, async (req, res) => {
-    const { cartaA, cartaB, significado, keywords } = req.body;
-    if (!cartaA || !cartaB || !significado) {
-        return res.status(400).json({ error: 'Faltan datos.' });
-    }
-
-    try {
-        const dupla = await Dupla.findOneAndUpdate(
-            { cartaA, cartaB },
-            { cartaA, cartaB, significado, keywords: keywords || [] },
-            { upsert: true, new: true }
-        );
-        res.json({ mensaje: 'Dupla guardada', dupla });
-    } catch (error) {
-        res.status(500).json({ error: 'Error al guardar dupla.' });
-    }
-});
-
-// Listar duplas existentes (admin)
-app.get('/api/admin/duplas', verificarAdmin, async (req, res) => {
-    try {
-        const duplas = await Dupla.find().sort({ cartaA: 1, cartaB: 1 });
-        res.json({ total: duplas.length, duplas });
-    } catch (error) {
-        res.status(500).json({ error: 'Error al listar duplas.' });
-    }
-});
 // ==========================================
 // SERVIDOR
 // ==========================================
