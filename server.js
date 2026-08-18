@@ -639,12 +639,11 @@ Responde directo a la pregunta.`;
 // ENDPOINTS: DUPLAS ESTRUCTURALES (BASE DE DATOS)
 // ==========================================
 
-// ... existing code ...
 // ==========================================
 // ENDPOINTS: DUPLAS ESTRUCTURALES (BASE DE DATOS)
 // ==========================================
 
-/* STREAMING_CHUNK:Defining robust duplas search endpoint... */
+/* STREAMING_CHUNK:Defining robust duplas search endpoint with diagnostic logging... */
 // Buscar significado de una dupla (ESTRICTO ORDEN: cartaA = a, cartaB = b)
 app.get('/api/duplas/buscar', async (req, res) => {
     const { a, b } = req.query;
@@ -654,7 +653,11 @@ app.get('/api/duplas/buscar', async (req, res) => {
         const claveBuscada = `${a}|${b}`;
         console.log(`🔍 [SERVIDOR] Buscando clave exacta: "${claveBuscada}"`);
 
-        // Consulta directa y blindada usando claveBuscador o coincidencia exacta de pares
+        // Depuración: ver qué colección estamos usando realmente y un documento de ejemplo
+        const nombreColeccionReal = Dupla.collection.name;
+        console.log(`📂 [SERVIDOR] Colección activa de Mongoose: "${nombreColeccionReal}"`);
+
+        // Intento 1: Búsqueda exacta
         let dupla = await Dupla.findOne({
             $or: [
                 { claveBuscador: claveBuscada },
@@ -663,8 +666,24 @@ app.get('/api/duplas/buscar', async (req, res) => {
             ]
         });
 
+        // Intento 2 de rescate: Si falla, buscar sin importar mayúsculas o espacios extra
         if (!dupla) {
-            console.log(`❌ [SERVIDOR] No se encontró la dupla: "${claveBuscada}"`);
+            console.log(`⚠️ [SERVIDOR] Intento exacto falló para "${claveBuscada}". Probando búsqueda flexible...`);
+            dupla = await Dupla.findOne({
+                $or: [
+                    { claveBuscador: new RegExp(`^${a.trim()}\\|${b.trim()}$`, 'i') },
+                    { 
+                        $and: [
+                            { $or: [{ cartaA: new RegExp(`^${a.trim()}$`, 'i') }, { carta1: new RegExp(`^${a.trim()}$`, 'i') }] },
+                            { $or: [{ cartaB: new RegExp(`^${b.trim()}$`, 'i') }, { carta2: new RegExp(`^${b.trim()}$`, 'i') }] }
+                        ]
+                    }
+                ]
+            });
+        }
+
+        if (!dupla) {
+            console.log(`❌ [SERVIDOR] Definitivamente no se encontró la dupla: "${claveBuscada}"`);
             return res.json({ encontrada: false, mensaje: 'Dupla no cargada aún.' });
         }
 
