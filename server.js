@@ -58,13 +58,14 @@ const CodigoPremiumSchema = new mongoose.Schema({
 
 const CodigoPremium = mongoose.models.CodigoPremium || mongoose.model('CodigoPremium', CodigoPremiumSchema);
 
+// Schema explícito para duplas conectando directamente a la colección 'duplas' sin índices duplicados
 const DuplaSchema = new mongoose.Schema({
-    claveBuscador: { type: String, required: true, unique: true },
+    claveBuscador: { type: String, required: true },
     cartaA: { type: String, required: true },
     cartaB: { type: String, required: true },
     significado: { type: String, required: true },
     keywords: [{ type: String }]
-}, { timestamps: true });
+}, { timestamps: true, collection: 'duplas' });
 
 DuplaSchema.index({ claveBuscador: 1 }, { unique: true });
 DuplaSchema.index({ cartaA: 1, cartaB: 1 });
