@@ -409,7 +409,45 @@ function extraerRespuesta(texto) {
     }
     return texto.trim();
 }
-
+mongoose.connection.once('open', async () => {
+    console.log("✅ Conectado a MongoDB Atlas con éxito.");
+    
+    try {
+        const db = mongoose.connection.db;
+        
+        // 1. Verificar qué colecciones existen
+        const colecciones = await db.listCollections().toArray();
+        console.log("📚 Colecciones disponibles:");
+        colecciones.forEach(c => console.log(`   - ${c.name}`));
+        
+        // 2. Verificar directamente en la colección 'duplas'
+        const coleccionDuplas = db.collection('duplas');
+        const countDirecto = await coleccionDuplas.countDocuments();
+        console.log(`📊 [DIRECTO] Documentos en 'duplas': ${countDirecto}`);
+        
+        if (countDirecto > 0) {
+            // 3. Obtener un ejemplo para ver la estructura
+            const ejemplo = await coleccionDuplas.findOne({});
+            console.log("📄 Ejemplo de documento:");
+            console.log(JSON.stringify(ejemplo, null, 2));
+            
+            // 4. Verificar el modelo de Mongoose
+            const countModelo = await Dupla.countDocuments();
+            console.log(`📊 [MODELO] Documentos en modelo Dupla: ${countModelo}`);
+            
+            if (countModelo === 0) {
+                console.log("⚠️ ¡INCONSISTENCIA! El modelo no ve los datos.");
+                console.log("   - Posible causa: El modelo está usando otra colección o base de datos.");
+                
+                // 5. Verificar el nombre de la colección en el modelo
+                console.log(`   - Colección en el modelo: "${Dupla.collection.name}"`);
+                console.log(`   - Base de datos en el modelo: "${Dupla.db.name}"`);
+            }
+        }
+    } catch (error) {
+        console.error("❌ Error en diagnóstico:", error);
+    }
+});
 app.post('/tirada', async (req, res) => {
     let { tema, a, b, c, d, estilo = 'filosofico', pregunta, cartas, modo } = req.body;
     if (!a && cartas && Array.isArray(cartas) && cartas.length >= 4) {
