@@ -638,25 +638,24 @@ Responde directo a la pregunta.`;
 // CONEXIÓN A MONGODB Y DIAGNÓSTICO
 // ==========================================
 
-/* STREAMING_CHUNK:Configuring safe MongoDB connection and diagnostic startup... */
 const mongoUri = process.env.MONGO_URI || process.env.MONGO_URL;
 
 mongoose.connect(mongoUri)
     .then(async () => {
         console.log("Conectado a MongoDB Atlas con éxito.");
         try {
-            const collections = await mongoose.connection.db.listCollections().toArray();
-            console.log("📂 [DIAGNÓSTICO] Colecciones existentes en la Base de Datos:", collections.map(c => c.name));
-            
-            const count = await mongoose.connection.db.collection('duplas').countDocuments();
-            console.log(`📊 [DIAGNÓSTICO] Documentos en colección 'duplas': ${count}`);
+            // Contar documentos usando el modelo Mongoose directamente
+            const count = await Dupla.countDocuments();
+            console.log(`📊 [DIAGNÓSTICO] Documentos encontrados mediante modelo Dupla: ${count}`);
             
             if (count > 0) {
-                const sample = await mongoose.connection.db.collection('duplas').findOne({});
-                console.log("🔍 [DIAGNÓSTICO] Muestra en crudo de la BD:", sample);
+                const sample = await Dupla.findOne({});
+                console.log("🔍 [DIAGNÓSTICO] Muestra exacta leída por el modelo Dupla:", sample);
+            } else {
+                console.log("⚠️ [DIAGNÓSTICO] ¡La colección del modelo Dupla está vacía!");
             }
         } catch (e) {
-            console.error("❌ Error en diagnóstico de colecciones:", e);
+            console.error("❌ Error en diagnóstico del modelo:", e);
         }
     })
     .catch(err => {
