@@ -635,31 +635,33 @@ Responde directo a la pregunta.`;
     }
 });
 // ==========================================
-// CONexión A MONGODB Y DIAGNÓSTICO
+// CONEXIÓN A MONGODB Y DIAGNÓSTICO
 // ==========================================
 
-/* STREAMING_CHUNK:Adding startup collection diagnostic logger... */
-mongoose.connect(process.MONGO_URI || process.env.MONGO_URI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true
-}).async ? await ... : mongoose.connection.once('open', async () => {
-    console.log("Conectado a MongoDB Atlas con éxito.");
-    try {
-        const collections = await mongoose.connection.db.listCollections().toArray();
-        console.log("📂 [DIAGNÓSTICO] Colecciones existentes en la Base de Datos:", collections.map(c => c.name));
-        
-        const count = await mongoose.connection.db.collection('duplas').countDocuments();
-        console.log(`📊 [DIAGNÓSTICO] Documentos en colección 'duplas': ${count}`);
-        
-        if (count > 0) {
-            const sample = await mongoose.connection.db.collection('duplas').findOne({});
-            console.log("🔍 [DIAGNÓSTICO] Muestra en crudo de la BD:", sample);
-        }
-    } catch (e) {
-        console.error("❌ Error en diagnóstico de colecciones:", e);
-    }
-});
+/* STREAMING_CHUNK:Configuring safe MongoDB connection and diagnostic startup... */
+const mongoUri = process.env.MONGO_URI || process.env.MONGO_URL;
 
+mongoose.connect(mongoUri)
+    .then(async () => {
+        console.log("Conectado a MongoDB Atlas con éxito.");
+        try {
+            const collections = await mongoose.connection.db.listCollections().toArray();
+            console.log("📂 [DIAGNÓSTICO] Colecciones existentes en la Base de Datos:", collections.map(c => c.name));
+            
+            const count = await mongoose.connection.db.collection('duplas').countDocuments();
+            console.log(`📊 [DIAGNÓSTICO] Documentos en colección 'duplas': ${count}`);
+            
+            if (count > 0) {
+                const sample = await mongoose.connection.db.collection('duplas').findOne({});
+                console.log("🔍 [DIAGNÓSTICO] Muestra en crudo de la BD:", sample);
+            }
+        } catch (e) {
+            console.error("❌ Error en diagnóstico de colecciones:", e);
+        }
+    })
+    .catch(err => {
+        console.error("❌ Error conectando a MongoDB:", err);
+    });
 // ==========================================
 // ENDPOINTS: DUPLAS ESTRUCTURALES (BASE DE DATOS)
 // ==========================================
