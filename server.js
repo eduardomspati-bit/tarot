@@ -357,39 +357,27 @@ app.get('/api/duplas/buscar', async (req, res) => {
     if (!a || !b) return res.status(400).json({ error: 'Faltan cartas.' });
 
     try {
-        // 🔥 Construir la clave con las comillas exactamente como están en MongoDB
-        const claveConComillas = `"${a.trim()}"|"${b.trim()}"`;
-        const claveInvertidaConComillas = `"${b.trim()}"|"${a.trim()}"`;
+        const cartaA = a.trim();
+        const cartaB = b.trim();
         
-        console.log(`🔍 [SERVIDOR] Buscando clave con comillas: "${claveConComillas}"`);
+        // Todas las combinaciones posibles
+        const claves = [
+            `"${cartaA}"|"${cartaB}"`,  // Con comillas (como están en MongoDB)
+            `"${cartaB}"|"${cartaA}"`,  // Invertida con comillas
+            `${cartaA}|${cartaB}`,      // Sin comillas (por si acaso)
+            `${cartaB}|${cartaA}`       // Invertida sin comillas
+        ];
+        
+        console.log(`🔍 Buscando:`, claves);
 
-        // Buscar directamente con la clave que tiene comillas
         let dupla = await Dupla.findOne({
-            $or: [
-                { claveBuscador: claveConComillas },
-                { claveBuscador: claveInvertidaConComillas },
-                // También buscar por si alguna vez se guardan sin comillas
-                { claveBuscador: `${a.trim()}|${b.trim()}` },
-                { claveBuscador: `${b.trim()}|${a.trim()}` }
-            ]
+            $or: claves.map(clave => ({ claveBuscador: clave }))
         });
 
         if (!dupla) {
-            console.log(`❌ [SERVIDOR] No se encontró la dupla: "${claveConComillas}"`);
-            return res.json({ 
-                encontrada: false, 
-                mensaje: 'Dupla no encontrada',
-                debug: { 
-                    buscado: claveConComillas,
-                    cartaA: a.trim(),
-                    cartaB: b.trim()
-                }
-            });
+            return res.json({ encontrada: false, mensaje: 'Dupla no encontrada' });
         }
 
-        console.log(`✅ [SERVIDOR] ¡Dupla encontrada!`);
-        console.log(`   - Clave en BD: ${dupla.claveBuscador}`);
-        
         res.json({
             encontrada: true,
             significado: dupla.significado,
@@ -397,7 +385,7 @@ app.get('/api/duplas/buscar', async (req, res) => {
             orden: 'directo'
         });
     } catch (error) {
-        console.error('❌ [SERVIDOR] Error buscando dupla:', error);
+        console.error('❌ Error:', error);
         res.status(500).json({ error: 'Error al buscar dupla.' });
     }
 });
