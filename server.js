@@ -644,30 +644,31 @@ Responde directo a la pregunta.`;
 // ENDPOINTS: DUPLAS ESTRUCTURALES (BASE DE DATOS)
 // ==========================================
 
-/* STREAMING_CHUNK:Defining duplas search endpoint... */
+/* STREAMING_CHUNK:Defining robust duplas search endpoint... */
 // Buscar significado de una dupla (ESTRICTO ORDEN: cartaA = a, cartaB = b)
 app.get('/api/duplas/buscar', async (req, res) => {
     const { a, b } = req.query;
     if (!a || !b) return res.status(400).json({ error: 'Faltan cartas.' });
 
     try {
-        console.log(`🔍 [SERVIDOR] Buscando dupla exacta: A="${a}", B="${b}"`);
+        const claveBuscada = `${a}|${b}`;
+        console.log(`🔍 [SERVIDOR] Buscando clave exacta: "${claveBuscada}"`);
 
-        // Buscamos cubriendo tanto cartaA/cartaB como carta1/carta2 por si acaso
+        // Consulta directa y blindada usando claveBuscador o coincidencia exacta de pares
         let dupla = await Dupla.findOne({
             $or: [
+                { claveBuscador: claveBuscada },
                 { cartaA: a, cartaB: b },
-                { carta1: a, carta2: b },
-                { claveBuscador: `${a}|${b}` }
+                { carta1: a, carta2: b }
             ]
         });
 
         if (!dupla) {
-            console.log(`❌ [SERVIDOR] No se encontró la dupla: "${a} | ${b}"`);
+            console.log(`❌ [SERVIDOR] No se encontró la dupla: "${claveBuscada}"`);
             return res.json({ encontrada: false, mensaje: 'Dupla no cargada aún.' });
         }
 
-        console.log(`✅ [SERVIDOR] Dupla encontrada con éxito: "${a} | ${b}"`);
+        console.log(`✅ [SERVIDOR] ¡Dupla encontrada con éxito!: "${claveBuscada}"`);
         res.json({
             encontrada: true,
             significado: dupla.significado,
@@ -679,7 +680,6 @@ app.get('/api/duplas/buscar', async (req, res) => {
         res.status(500).json({ error: 'Error al buscar dupla.' });
     }
 });
-
 
 // ==========================================
 // ENDPOINTS DE ADMIN (USUARIOS)
