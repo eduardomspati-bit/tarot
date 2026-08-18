@@ -411,16 +411,21 @@ app.get('/api/duplas/buscar', async (req, res) => {
                         { carta1: `"${cartaALimpia}"` },
                         { carta2: `"${cartaBLimpia}"` }
                     ]
-                },
-                // Búsqueda flexible con regex
-                { 
-                    $or: [
-                        { claveBuscador: { $regex: `${cartaALimpia}.*${cartaBLimpia}`, 'i' } },
-                        { claveBuscador: { $regex: `${cartaBLimpia}.*${cartaALimpia}`, 'i' } }
-                    ]
                 }
             ]
         });
+
+        // Si no se encontró, hacer una búsqueda más flexible
+        if (!dupla) {
+            console.log(`⚠️ [SERVIDOR] Búsqueda exacta falló, probando búsqueda flexible...`);
+            
+            dupla = await Dupla.findOne({
+                $or: [
+                    { claveBuscador: { $regex: new RegExp(cartaALimpia + '.*' + cartaBLimpia, 'i') } },
+                    { claveBuscador: { $regex: new RegExp(cartaBLimpia + '.*' + cartaALimpia, 'i') } }
+                ]
+            });
+        }
 
         if (!dupla) {
             console.log(`❌ [SERVIDOR] No se encontró la dupla`);
@@ -437,6 +442,9 @@ app.get('/api/duplas/buscar', async (req, res) => {
         }
 
         console.log(`✅ [SERVIDOR] ¡Dupla encontrada!`);
+        console.log(`   - Clave: ${dupla.claveBuscador}`);
+        console.log(`   - Significado: ${dupla.significado?.substring(0, 50)}...`);
+
         res.json({
             encontrada: true,
             significado: dupla.significado,
@@ -445,10 +453,9 @@ app.get('/api/duplas/buscar', async (req, res) => {
         });
     } catch (error) {
         console.error('❌ [SERVIDOR] Error buscando dupla:', error);
-        res.status(500).json({ error: 'Error al buscar dupla.' });
+        res.status(500).json({ error: 'Error al buscar dupla.', detalle: error.message });
     }
 });
-
 function extraerRespuesta(texto) {
     if (!texto) return '';
     const idxCierre = texto.lastIndexOf('</thinking>');
