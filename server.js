@@ -24,7 +24,8 @@ app.options('*', cors(corsOptions));
 app.use(express.json());
 app.use(express.static(__dirname));
 
-const MONGO_URI = process.env.MONGO_URI || process.env.MONGO_URL || "mongodb+srv://edu1826_db_user:GATO8objeto@cluster0.39xxpjk.mongodb.net/tarotApp?retryWrites=true&w=majority";
+// En tu server.js, asegúrate de que la URI incluya el nombre de la base de datos:
+const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://edu1826_db_user:GATO8objeto@cluster0.39xxpjk.mongodb.net/tarotApp?retryWrites=true&w=majority";
 const MODEL_NAME = process.env.MODEL_NAME || 'openai/gpt-oss-20b';
 const API_KEY = process.env.GROQ_API_KEY || process.env.API_KEY;
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
