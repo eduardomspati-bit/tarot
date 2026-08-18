@@ -634,7 +634,34 @@ Responde directo a la pregunta.`;
         return res.status(500).json({ error: 'Error en repregunta.' });
     }
 });
+// ==========================================
+// CONexión A MONGODB Y DIAGNÓSTICO
+// ==========================================
 
+/* STREAMING_CHUNK:Adding startup collection diagnostic logger... */
+mongoose.connect(process.MONGO_URI || process.env.MONGO_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true
+}).async ? await ... : mongoose.connection.once('open', async () => {
+    console.log("Conectado a MongoDB Atlas con éxito.");
+    try {
+        const collections = await mongoose.connection.db.listCollections().toArray();
+        console.log("📂 [DIAGNÓSTICO] Colecciones existentes en la Base de Datos:", collections.map(c => c.name));
+        
+        const count = await mongoose.connection.db.collection('duplas').countDocuments();
+        console.log(`📊 [DIAGNÓSTICO] Documentos en colección 'duplas': ${count}`);
+        
+        if (count > 0) {
+            const sample = await mongoose.connection.db.collection('duplas').findOne({});
+            console.log("🔍 [DIAGNÓSTICO] Muestra en crudo de la BD:", sample);
+        }
+    } catch (e) {
+        console.error("❌ Error en diagnóstico de colecciones:", e);
+    }
+});
+
+// ==========================================
+// ENDPOINTS: DUPLAS ESTRUCTURALES (BASE DE DATOS)
 // ==========================================
 // ENDPOINTS: DUPLAS ESTRUCTURALES (BASE DE DATOS)
 // ==========================================
