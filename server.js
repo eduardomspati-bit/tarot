@@ -37,6 +37,40 @@ console.log('  API_KEY existe:', !!API_KEY);
 console.log('  ADMIN_TOKEN existe:', !!ADMIN_TOKEN);
 console.log('  MONGO_URI existe:', !!MONGO_URI);
 
+const UsuarioSchema = new mongoose.Schema({
+    nombre: { type: String, required: true },
+    email: { type: String, required: true, unique: true, lowercase: true, trim: true },
+    plan: { type: String, enum: ['Gratis', 'Premium'], default: 'Gratis' },
+    totalTiradas: { type: Number, default: 0 },
+    muestrasFisicasUsadas: { type: Number, default: 0 },
+    ultimaConexion: { type: String, default: () => new Date().toISOString().split('T')[0] },
+    codigoPremiumUsado: { type: String, default: null }
+}, { timestamps: true });
+
+const Usuario = mongoose.models.Usuario || mongoose.model('Usuario', UsuarioSchema);
+
+const CodigoPremiumSchema = new mongoose.Schema({
+    codigo: { type: String, required: true, unique: true, uppercase: true },
+    usado: { type: Boolean, default: false },
+    usadoPor: { type: mongoose.Schema.Types.ObjectId, ref: 'Usuario', default: null },
+    fechaUso: { type: Date, default: null }
+}, { timestamps: true });
+
+const CodigoPremium = mongoose.models.CodigoPremium || mongoose.model('CodigoPremium', CodigoPremiumSchema);
+
+const DuplaSchema = new mongoose.Schema({
+    claveBuscador: { type: String, required: true, unique: true },
+    cartaA: { type: String, required: true },
+    cartaB: { type: String, required: true },
+    significado: { type: String, required: true },
+    keywords: [{ type: String }]
+}, { timestamps: true });
+
+DuplaSchema.index({ claveBuscador: 1 }, { unique: true });
+DuplaSchema.index({ cartaA: 1, cartaB: 1 });
+
+const Dupla = mongoose.models.Dupla || mongoose.model('Dupla', DuplaSchema);
+
 if (MONGO_URI) {
     mongoose.connect(MONGO_URI)
         .then(async () => {
@@ -59,41 +93,6 @@ if (MONGO_URI) {
 } else {
     console.warn('MONGO_URI no configurada.');
 }
-
-const UsuarioSchema = new mongoose.Schema({
-    nombre: { type: String, required: true },
-    email: { type: String, required: true, unique: true, lowercase: true, trim: true },
-    plan: { type: String, enum: ['Gratis', 'Premium'], default: 'Gratis' },
-    totalTiradas: { type: Number, default: 0 },
-    muestrasFisicasUsadas: { type: Number, default: 0 },
-    ultimaConexion: { type: String, default: () => new Date().toISOString().split('T')[0] },
-    codigoPremiumUsado: { type: String, default: null }
-}, { timestamps: true });
-
-const Usuario = mongoose.models.Usuario || mongoose.model('Usuario', UsuarioSchema);
-
-const CodigoPremiumSchema = new mongoose.Schema({
-    codigo: { type: String, required: true, unique: true, uppercase: true },
-    usado: { type: Boolean, default: false },
-    usadoPor: { type: mongoose.Schema.Types.ObjectId, ref: 'Usuario', default: null },
-    fechaUso: { type: Date, default: null }
-}, { timestamps: true });
-
-const CodigoPremium = mongoose.models.CodigoPremium || mongoose.model('CodigoPremium', CodigoPremiumSchema);
-
-// Modelo de Duplas Estructurales ajustado con claveBuscador estricta
-const DuplaSchema = new mongoose.Schema({
-    claveBuscador: { type: String, required: true, unique: true },
-    cartaA: { type: String, required: true },
-    cartaB: { type: String, required: true },
-    significado: { type: String, required: true },
-    keywords: [{ type: String }]
-}, { timestamps: true });
-
-DuplaSchema.index({ claveBuscador: 1 }, { unique: true });
-DuplaSchema.index({ cartaA: 1, cartaB: 1 });
-
-const Dupla = mongoose.models.Dupla || mongoose.model('Dupla', DuplaSchema);
 
 function verificarAdmin(req, res, next) {
     const token = req.headers['x-admin-token'];
@@ -362,7 +361,6 @@ app.get('/api/duplas/buscar', async (req, res) => {
         const nombreColeccionReal = Dupla.collection.name;
         console.log(`📂 [SERVIDOR] Colección activa de Mongoose: "${nombreColeccionReal}"`);
 
-        // Intento 1: Búsqueda exacta por clave compuesta o campos directos
         let dupla = await Dupla.findOne({
             $or: [
                 { claveBuscador: claveBuscada },
@@ -371,7 +369,6 @@ app.get('/api/duplas/buscar', async (req, res) => {
             ]
         });
 
-        // Intento 2: Búsqueda flexible (insensible a mayúsculas/espacios)
         if (!dupla) {
             console.log(`⚠️ [SERVIDOR] Intento exacto falló para "${claveBuscada}". Probando búsqueda flexible...`);
             dupla = await Dupla.findOne({
@@ -389,7 +386,7 @@ app.get('/api/duplas/buscar', async (req, res) => {
 
         if (!dupla) {
             console.log(`❌ [SERVIDOR] Definitivamente no se encontró la dupla: "${claveBuscada}"`);
-            return.json({ encontrada: false, mensaje: 'Dupla no cargada aún.' });
+            return res.json({ encontrada: false, mensaje: 'Dupla no cargada aún.' });
         }
 
         console.log(`✅ [SERVIDOR] ¡Dupla encontrada con éxito!: "${claveBuscada}"`);
