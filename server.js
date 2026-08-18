@@ -360,15 +360,13 @@ app.get('/api/duplas/buscar', async (req, res) => {
         const cartaA = a.trim();
         const cartaB = b.trim();
         
-        // Todas las combinaciones posibles
+        // Solo buscamos en el orden exacto: cartaA primero y cartaB después
         const claves = [
             `"${cartaA}"|"${cartaB}"`,  // Con comillas (como están en MongoDB)
-            `"${cartaB}"|"${cartaA}"`,  // Invertida con comillas
-            `${cartaA}|${cartaB}`,      // Sin comillas (por si acaso)
-            `${cartaB}|${cartaA}`       // Invertida sin comillas
+            `${cartaA}|${cartaB}`       // Sin comillas (por si acaso)
         ];
         
-        console.log(`🔍 Buscando:`, claves);
+        console.log(`🔍 Buscando (orden exacto):`, claves);
 
         let dupla = await Dupla.findOne({
             $or: claves.map(clave => ({ claveBuscador: clave }))
@@ -389,6 +387,7 @@ app.get('/api/duplas/buscar', async (req, res) => {
         res.status(500).json({ error: 'Error al buscar dupla.' });
     }
 });
+
 function extraerRespuesta(texto) {
     if (!texto) return '';
     const idxCierre = texto.lastIndexOf('</thinking>');
@@ -409,6 +408,7 @@ function extraerRespuesta(texto) {
     }
     return texto.trim();
 }
+
 mongoose.connection.once('open', async () => {
     console.log("✅ Conectado a MongoDB Atlas con éxito.");
     
