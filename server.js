@@ -635,59 +635,45 @@ Responde directo a la pregunta.`;
     }
 });
 
-// ... existing code ...
 // ==========================================
 // ENDPOINTS: DUPLAS ESTRUCTURALES (BASE DE DATOS)
 // ==========================================
 
-// Buscar significado de una dupla (BUSCA EN AMBOS SENTIDOS: A+B o B+A)
+// Buscar significado de una dupla (ESTRICTO ORDEN: cartaA = a, cartaB = b)
 app.get('/api/duplas/buscar', async (req, res) => {
     const { a, b } = req.query;
     if (!a || !b) return res.status(400).json({ error: 'Faltan cartas.' });
 
     try {
-        // Intentamos buscar en orden directo (cartaA = a, cartaB = b)
-        let dupla = await Dupla.findOne({ cartaA: a, cartaB: b });
-        let ordenEncontrado = 'directo';
+        console.log(`🔍 [SERVIDOR] Buscando dupla exacta: A="${a}", B="${b}"`);
 
-        // Si no está, intentamos buscar en orden inverso (cartaA = b, cartaB = a)
+        // Buscamos cubriendo tanto cartaA/cartaB como carta1/carta2 por si acaso
+        let dupla = await Dupla.findOne({
+            $or: [
+                { cartaA: a, cartaB: b },
+                { carta1: a, carta2: b },
+                { claveBuscador: `${a}|${b}` }
+            ]
+        });
+
         if (!dupla) {
-            dupla = await Dupla.findOne({ cartaA: b, cartaB: a });
-            ordenEncontrado = 'inverso';
+            console.log(`❌ [SERVIDOR] No se encontró la dupla: "${a} | ${b}"`);
+            return.json({ encontrada: false, mensaje: 'Dupla no cargada aún.' });
         }
 
-        if (!dupla) {
-            return res.json({ encontrada: false, mensaje: 'Dupla no cargada aún.' });
-        }
-
+        console.log(`✅ [SERVIDOR] Dupla encontrada con éxito: "${a} | ${b}"`);
         res.json({
             encontrada: true,
             significado: dupla.significado,
-            keywords: dupla.keywords,
-            orden: ordenEncontrado
+            keywords: dupla.keywords || [],
+            orden: 'directo'
         });
     } catch (error) {
-        console.error('Error buscando dupla:', error);
+        console.error('❌ [SERVIDOR] Error buscando dupla:', error);
         res.status(500).json({ error: 'Error al buscar dupla.' });
     }
 });
-// Eliminar dupla (admin)
-app.delete('/api/admin/duplas', verificarAdmin, async (req, res) => {
-    const { cartaA, cartaB } = req.body;
-    if (!cartaA || !cartaB) {
-        return res.status(400).json({ error: 'Faltan cartas para eliminar.' });
-    }
 
-    try {
-        const resultado = await Dupla.findOneAndDelete({ cartaA, cartaB });
-        if (!resultado) {
-            return res.status(404).json({ error: 'Dupla no encontrada.' });
-        }
-        res.json({ mensaje: `Dupla ${cartaA} | ${cartaB} eliminada.` });
-    } catch (error) {
-        res.status(500).json({ error: 'Error al eliminar dupla.' });
-    }
-});
 
 // ==========================================
 // ENDPOINTS DE ADMIN (USUARIOS)
