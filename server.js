@@ -639,6 +639,12 @@ Responde directo a la pregunta.`;
 // ENDPOINTS: DUPLAS ESTRUCTURALES (BASE DE DATOS)
 // ==========================================
 
+// ... existing code ...
+// ==========================================
+// ENDPOINTS: DUPLAS ESTRUCTURALES (BASE DE DATOS)
+// ==========================================
+
+/* STREAMING_CHUNK:Defining duplas search endpoint... */
 // Buscar significado de una dupla (ESTRICTO ORDEN: cartaA = a, cartaB = b)
 app.get('/api/duplas/buscar', async (req, res) => {
     const { a, b } = req.query;
@@ -658,7 +664,7 @@ app.get('/api/duplas/buscar', async (req, res) => {
 
         if (!dupla) {
             console.log(`❌ [SERVIDOR] No se encontró la dupla: "${a} | ${b}"`);
-            return.json({ encontrada: false, mensaje: 'Dupla no cargada aún.' });
+            return res.json({ encontrada: false, mensaje: 'Dupla no cargada aún.' });
         }
 
         console.log(`✅ [SERVIDOR] Dupla encontrada con éxito: "${a} | ${b}"`);
