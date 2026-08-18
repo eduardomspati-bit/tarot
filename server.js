@@ -357,94 +357,39 @@ app.get('/api/duplas/buscar', async (req, res) => {
     if (!a || !b) return res.status(400).json({ error: 'Faltan cartas.' });
 
     try {
-        // 🔥 IMPORTANTE: Limpiar las comillas de los valores recibidos
-        const cartaALimpia = a.trim().replace(/["']/g, '');
-        const cartaBLimpia = b.trim().replace(/["']/g, '');
+        // 🔥 Construir la clave con las comillas exactamente como están en MongoDB
+        const claveConComillas = `"${a.trim()}"|"${b.trim()}"`;
+        const claveInvertidaConComillas = `"${b.trim()}"|"${a.trim()}"`;
         
-        // Generar claves CON y SIN comillas
-        const claveSinComillas = `${cartaALimpia}|${cartaBLimpia}`;
-        const claveConComillas = `"${cartaALimpia}"|"${cartaBLimpia}"`;
-        const claveInvertidaSinComillas = `${cartaBLimpia}|${cartaALimpia}`;
-        const claveInvertidaConComillas = `"${cartaBLimpia}"|"${cartaALimpia}"`;
-        
-        console.log(`🔍 [SERVIDOR] Buscando dupla:`);
-        console.log(`   - Carta A limpia: "${cartaALimpia}"`);
-        console.log(`   - Carta B limpia: "${cartaBLimpia}"`);
-        console.log(`   - Buscando clave sin comillas: "${claveSinComillas}"`);
-        console.log(`   - Buscando clave con comillas: "${claveConComillas}"`);
+        console.log(`🔍 [SERVIDOR] Buscando clave con comillas: "${claveConComillas}"`);
 
-        // Buscar en TODAS las combinaciones posibles
+        // Buscar directamente con la clave que tiene comillas
         let dupla = await Dupla.findOne({
             $or: [
-                // ClaveBuscador sin comillas
-                { claveBuscador: claveSinComillas },
-                // ClaveBuscador con comillas
                 { claveBuscador: claveConComillas },
-                // ClaveBuscador invertida sin comillas
-                { claveBuscador: claveInvertidaSinComillas },
-                // ClaveBuscador invertida con comillas
                 { claveBuscador: claveInvertidaConComillas },
-                // Buscar por cartaA y cartaB (sin comillas)
-                { 
-                    $and: [
-                        { cartaA: { $regex: new RegExp(`^${cartaALimpia}$`, 'i') } },
-                        { cartaB: { $regex: new RegExp(`^${cartaBLimpia}$`, 'i') } }
-                    ]
-                },
-                // Buscar por cartaA y cartaB (con comillas)
-                { 
-                    $and: [
-                        { cartaA: `"${cartaALimpia}"` },
-                        { cartaB: `"${cartaBLimpia}"` }
-                    ]
-                },
-                // Buscar por carta1 y carta2 (sin comillas)
-                { 
-                    $and: [
-                        { carta1: { $regex: new RegExp(`^${cartaALimpia}$`, 'i') } },
-                        { carta2: { $regex: new RegExp(`^${cartaBLimpia}$`, 'i') } }
-                    ]
-                },
-                // Buscar por carta1 y carta2 (con comillas)
-                { 
-                    $and: [
-                        { carta1: `"${cartaALimpia}"` },
-                        { carta2: `"${cartaBLimpia}"` }
-                    ]
-                }
+                // También buscar por si alguna vez se guardan sin comillas
+                { claveBuscador: `${a.trim()}|${b.trim()}` },
+                { claveBuscador: `${b.trim()}|${a.trim()}` }
             ]
         });
 
-        // Si no se encontró, hacer una búsqueda más flexible
         if (!dupla) {
-            console.log(`⚠️ [SERVIDOR] Búsqueda exacta falló, probando búsqueda flexible...`);
-            
-            dupla = await Dupla.findOne({
-                $or: [
-                    { claveBuscador: { $regex: new RegExp(cartaALimpia + '.*' + cartaBLimpia, 'i') } },
-                    { claveBuscador: { $regex: new RegExp(cartaBLimpia + '.*' + cartaALimpia, 'i') } }
-                ]
-            });
-        }
-
-        if (!dupla) {
-            console.log(`❌ [SERVIDOR] No se encontró la dupla`);
+            console.log(`❌ [SERVIDOR] No se encontró la dupla: "${claveConComillas}"`);
             return res.json({ 
                 encontrada: false, 
-                mensaje: 'Dupla no encontrada en la base de datos.',
-                debug: {
-                    cartaA: cartaALimpia,
-                    cartaB: cartaBLimpia,
-                    claveSinComillas,
-                    claveConComillas
+                mensaje: 'Dupla no encontrada',
+                debug: { 
+                    buscado: claveConComillas,
+                    cartaA: a.trim(),
+                    cartaB: b.trim()
                 }
             });
         }
 
         console.log(`✅ [SERVIDOR] ¡Dupla encontrada!`);
-        console.log(`   - Clave: ${dupla.claveBuscador}`);
-        console.log(`   - Significado: ${dupla.significado?.substring(0, 50)}...`);
-
+        console.log(`   - Clave en BD: ${dupla.claveBuscador}`);
+        
         res.json({
             encontrada: true,
             significado: dupla.significado,
@@ -453,7 +398,7 @@ app.get('/api/duplas/buscar', async (req, res) => {
         });
     } catch (error) {
         console.error('❌ [SERVIDOR] Error buscando dupla:', error);
-        res.status(500).json({ error: 'Error al buscar dupla.', detalle: error.message });
+        res.status(500).json({ error: 'Error al buscar dupla.' });
     }
 });
 function extraerRespuesta(texto) {
