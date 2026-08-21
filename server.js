@@ -223,6 +223,10 @@ app.get('/api/auth/perfil', verificarAuth, async (req, res) => {
         res.status(500).json({ error: 'Error al obtener perfil.' });
     }
 });
+// Ruta de Keep-Alive para evitar que Render se duerma
+app.get('/api/ping', (req, res) => {
+    res.status(200).send('¡Servidor despierto y operativo! 🔮');
+});
 
 app.post('/api/auth/canjear-codigo', verificarAuth, async (req, res) => {
     const { codigo } = req.body;
